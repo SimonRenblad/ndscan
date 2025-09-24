@@ -3,17 +3,56 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+    src-oitg = {
+      url = "github:OxfordIonTrapGroup/oitg";
+      flake = false;
+    };
+    artiq.url = git+https://github.com/m-labs/artiq.git;
   };
 
-  outputs = { self, nixpkgs }:
-  let
-    pkgs = import nixpkgs { system = "x86_64-linux"; };
-  in {
-    devShells.x86_64-linux.default = pkgs.mkShell {
-      name = "ndscan-dev-shell";
-      buildInputs = [
-        (pkgs.python3.withPackages (ps: with ps; [scipy numpy h5py]))
-      ];
+  outputs =
+    { self, nixpkgs, src-oitg, artiq }:
+    let
+      pkgs = import nixpkgs { system = "x86_64-linux"; };
+      oitg = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "oitg";
+        version = "0.2";
+        src = src-oitg;
+        pyproject = true;
+        build-system = [ pkgs.python3Packages.poetry-core ];
+        propagatedBuildInputs = with pkgs.python3Packages; [
+          poetry-dynamic-versioning
+          numpy
+          h5py
+          scipy
+          statsmodels
+        ];
+      };
+      ndscan = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "ndscan";
+        version = "0.3";
+        src = self;       
+        pyproject = true;
+        build-system = [pkgs.python3Packages.hatchling];
+        propagatedBuildInputs = [ oitg artiq.packages.x86_64-linux.artiq ];
+        dontWrapQtApps = true;
+      };
+    in
+    {
+      devShells.x86_64-linux.default = pkgs.mkShell {
+        name = "ndscan-dev-shell";
+        buildInputs = [
+          (pkgs.python3.withPackages (
+            ps: with ps; [
+              scipy
+              numpy
+              h5py
+              ndscan
+              oitg
+            ]
+          ))
+        ];
+      };
+      packages.x86_64-linux.default = ndscan;
     };
-  };
 }
