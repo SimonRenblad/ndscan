@@ -239,9 +239,16 @@ class HostScanRunner(ScanRunner):
 
 @compile
 class KernelScanRunner(ScanRunner):
+    _fragment: KernelInvariant[ExpFragment]
+    _axes: KernelInvariant[list[ScanAxis]]
+    _axis_sinks: KernelInvariant[list[ResultSink]]
+    _result_batcher: KernelInvariant[ResultBatcher | None]
     # Note: ARTIQ Python is currently severely limited in its support for generics or
     # metaprogramming. While the interface for this class is effortlessly generic, the
     # implementation might well be a long-forgotten ritual for invoking Cthulhu.
+    # HACK: NAC3, due to lack of support for both kernel_from_string,
+    # binding methods to object instances, and generic length tuples of different types,
+    # this implementation only allows scanning on floats
 
     def setup(self, fragment: ExpFragment, axes: list[ScanAxis],
               axis_sinks: list[ResultSink]) -> None:
@@ -256,26 +263,6 @@ class KernelScanRunner(ScanRunner):
         # the minimum interval; calls are only made after a point has been completed).
         self._pause_check_interval_mu = self.core.seconds_to_mu(0.2)
         self._last_pause_check_mu = np.int64(0)
-
-        # _get_param_values_chunk returns a tuple of lists of values, one for each
-        # scan axis. Synthesize a return type annotation (`def foo(self): -> …`) with
-        # the concrete type for this scan so the compiler can infer the types in
-        # run_chunk() correctly.
-        self._get_param_values_chunk.__func__.__annotations__ = {
-            "return":
-            tuple.__class_getitem__(tuple(list[a.param_store.RpcType] for a in axes))
-        }
-
-        # Build kernel function that calls _get_param_values_chunk() and iterates over
-        # the returned values, assigning them to the respective parameter stores and
-        # calling _run_point() for each.
-        #
-        # Currently, this can't be expressed as generic code, as there is no way to
-        # express indexing or deconstructing a tuple of values of inhomogeneous types
-        # without actually writing it out as an assignment from a tuple value.
-        for i, axis in enumerate(axes):
-            setattr(self, f"_param_setter_{i}", axis.param_store.set_from_rpc)
-        self._run_chunk = self._build_run_chunk(len(axes))
 
         # We'll have to set up the ResultBatcher on the host during the scan to
         # appropriately handle the results streaming in via async RPCs, so unfortunately
@@ -293,19 +280,17 @@ class KernelScanRunner(ScanRunner):
     _RUN_CHUNK_INTERRUPTED = 1
     _RUN_CHUNK_SCAN_COMPLETE = 2
 
-    def _build_run_chunk(self, num_axes):
-        param_decl = " ".join(f"p{idx}," for idx in range(num_axes))
-        code = ""
-        code += f"({param_decl}) = self._get_param_values_chunk()\n"
-        code += "if not p0:\n"  # No more points
-        code += "    return self._RUN_CHUNK_SCAN_COMPLETE\n"
-        code += "for i in range(len(p0)):\n"
-        for idx in range(num_axes):
-            code += "    self._param_setter_{0}(p{0}[i])\n".format(idx)
-        code += "    if self._run_point():\n"
-        code += "        return self._RUN_CHUNK_INTERRUPTED\n"
-        code += "return self._RUN_CHUNK_PROCEED"
-        return kernel_from_string(["self"], code)
+    @kernel
+    def _run_chunk(self) -> int32:
+        chunk = self.get_param_values_chunk()
+        if len(chunk) == 0:
+            return self._RUN_CHUNK_SCAN_COMPLETE
+        for i in len(chunk[0]):
+            for p in range(len(chunk)):
+]               self._axes[p].param_store.set_value(chunk[p][i])
+            if self._run_point():
+                return self._RUN_CHUNK_INTERRUPTED
+        return self._RUN_CHUNK_PROCEED
 
     @rpc(flags={"async"})
     def _install_result_batcher(self):
@@ -389,7 +374,7 @@ class KernelScanRunner(ScanRunner):
         return False
 
     @rpc
-    def _get_param_values_chunk(self):
+    def _get_param_values_chunk(self) -> list[list[float]]:
         # Number of scan points to send at once. After each chunk, the kernel needs to
         # execute a blocking RPC to fetch new points, so this should be chosen such
         # that latency/constant overhead and throughput are balanced. 10 is an arbitrary
@@ -401,31 +386,32 @@ class KernelScanRunner(ScanRunner):
         self._current_chunk.extend(
             islice(self._points, CHUNK_SIZE - len(self._current_chunk)))
 
-        values = tuple([] for _ in self._axes)
+        values = list([] for _ in self._axes)
         for p in self._current_chunk:
             for i, (value, axis) in enumerate(zip(p, self._axes)):
                 # KLUDGE: Explicitly coerce value to the target type here so we can use
                 # the regular (float) scans for integers until proper support for int
                 # scans is implemented.
+                # HACK: NAC3, enforce float type for ALL SCANS (no support for string params enums etc)
                 values[i].append(
-                    axis.param_store.to_rpc_type(
+                    float(axis.param_store.to_rpc_type(
                         axis.param_store.coerce(
-                            axis.param_store.value_from_pyon(value))))
+                            axis.param_store.value_from_pyon(value)))))
         return values
 
     @rpc(flags={"async"})
-    def _retry_point(self):
+    def _retry_point(self) -> None:
         self._result_batcher.discard_current()
 
     @rpc(flags={"async"})
-    def _skip_point(self):
+    def _skip_point(self) -> None:
         self._result_batcher.discard_current()
         values = self._current_chunk.pop(0)
         logger.error("Skipping point: %s", values)
         self._update_host_param_stores()
 
     @rpc(flags={"async"})
-    def _point_completed(self):
+    def _point_completed(self) -> None:
         # This might raise an exception, which will only bubble up to the user during
         # the next synchronous RPC request. As this only occurs when the user code
         # contains a logic error (failure to call push() on a result channel), this
