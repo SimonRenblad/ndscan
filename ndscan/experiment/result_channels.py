@@ -241,6 +241,7 @@ class ResultChannel:
         raise NotImplementedError()
 
 
+@compile
 class NumericChannel(ResultChannel):
     r"""Base class for :class:`ResultChannel`\ s of numerical results, with scale/unit
     semantics and optional range limits.

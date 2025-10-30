@@ -237,6 +237,7 @@ class HostScanRunner(ScanRunner):
                 self._fragment.device_cleanup()
 
 
+@compile
 class KernelScanRunner(ScanRunner):
     # Note: ARTIQ Python is currently severely limited in its support for generics or
     # metaprogramming. While the interface for this class is effortlessly generic, the

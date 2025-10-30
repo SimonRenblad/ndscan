@@ -796,6 +796,7 @@ def _skip_common_prefix(target: list, reference: list) -> list:
     return target[i:]
 
 
+@compile
 class AggregateExpFragment(ExpFragment):
     r"""Combines multiple :class:`ExpFragment`\ s and callables by executing them one
     after each other each time :meth:`run_once` is called.

@@ -30,7 +30,7 @@ class InvalidDefaultError(ValueError):
     """Raised when a default value is outside the specified range of valid parameter
     values."""
 
-
+@compile
 class ParamStore:
     """
     :param identity: ``(fqn, path_spec)`` pair representing the identity of this param
@@ -99,7 +99,7 @@ class ParamStore:
         """
         return value
 
-
+@compile
 class FloatParamStore(ParamStore):
     RpcType = float
 
