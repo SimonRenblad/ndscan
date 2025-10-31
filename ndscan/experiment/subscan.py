@@ -485,6 +485,7 @@ class SubscanExpFragment(ExpFragment):
         # FIXME: Fix subscan model name inference code, remove "_".
         self._subscan = setup_subscan(self, "_", scanned_fragment, axis_params,
                                       save_results_by_default, expose_analysis_results)
+        # NAC3TODO: reassigning bound methods does not work and is a hack
         if is_kernel(scanned_fragment.run_once):
             self.run_once = self._kernel_run_once
 

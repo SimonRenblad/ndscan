@@ -14,6 +14,7 @@ def path_matches_spec(path: Iterable[str], spec: str) -> bool:
     return "/".join(path) == spec
 
 
+# NAC3TODO: this is no longer reliable and is often used with bound methods
 def is_kernel(func) -> bool:
     if not hasattr(func, "artiq_embedded"):
         return False

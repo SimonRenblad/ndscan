@@ -36,6 +36,7 @@ def _log_failed_cleanup(path: str) -> None:
     _log_failed_cleanup_host(path)
 
 
+@compile
 class Fragment(HasEnvironment):
     """Main building block."""
     def build(self, fragment_path: list[str], *args, **kwargs):
@@ -95,6 +96,8 @@ class Fragment(HasEnvironment):
         self.build_fragment(*args, **kwargs)
         self._building = False
 
+
+        # NAC3TODO: All this kernel_from_string hackery won't work in nac3, do clean up and setup for ALL subfragments
         # Now that we know all subfragments, synthesise code for device_setup() and
         # device_cleanup() to forward to subfragments.
         code = ""
