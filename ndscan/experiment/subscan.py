@@ -21,6 +21,7 @@ from ..utils import merge_no_duplicates, shorten_to_unambiguous_suffixes
 __all__ = ["setattr_subscan", "Subscan", "SubscanExpFragment"]
 
 
+@compile
 class Subscan:
     """Handle returned by :meth:`setattr_subscan`, allowing the subscan to actually be
     executed.
@@ -369,6 +370,7 @@ def setup_subscan(result_target: Fragment,
                            analyses, parent_analysis_result_channels)
 
 
+@compile
 class SubscanExpFragment(ExpFragment):
     """An :class:`.ExpFragment` that scans another :class:`.ExpFragment` when it
     executes ("subscan").
