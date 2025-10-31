@@ -2,9 +2,9 @@
 Result handling building blocks.
 """
 
-from artiq.language import HasEnvironment, kernel, portable, rpc
+from artiq.language import HasEnvironment, kernel, portable, rpc, Kernel, KernelInvariant
 import artiq.language.units
-from typing import Any
+from typing import Any, Generic
 from .utils import dump_json
 
 __all__ = [
@@ -144,6 +144,7 @@ class ScalarDatasetSink(ResultSink, HasEnvironment):
         return self.get_dataset(self.key) if self.has_pushed else None
 
 
+@compile
 class ResultChannel:
     """
     :param path: The path to the channel in the fragment tree (e.g. ``"readout/p"``).
@@ -240,9 +241,13 @@ class ResultChannel:
     def _coerce_to_type(self, value):
         raise NotImplementedError()
 
+T = TypeVar("T")
+
 
 @compile
-class NumericChannel(ResultChannel):
+class NumericChannel(ResultChannel, Generic[T]):
+    _value_pushed: Kernel[bool]
+    _last_value: Kernel[T]
     r"""Base class for :class:`ResultChannel`\ s of numerical results, with scale/unit
     semantics and optional range limits.
 

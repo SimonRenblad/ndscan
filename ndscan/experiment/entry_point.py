@@ -67,7 +67,9 @@ def get_class_pretty_name(cls: type[object]) -> str:
     return strip_suffix(doc.strip().splitlines()[0].strip(), ".")
 
 
+@compile
 class FragmentScanExperiment(EnvExperiment):
+    fragment: KernelInvariant[ExpFragment]
     """Implements possibly (trivial) scans of an :class:`.ExpFragment`, with overrides
     and scan axes as specified by the :data:`PARAMS_ARG_KEY` dataset, and result
     channels being broadcasted to datasets.
@@ -230,7 +232,7 @@ class ArgumentInterface(HasEnvironment):
             "skip_on_persistent_transitory_error", False)
         return spec, no_axes_mode, skip_on_persistent_transitory_error
 
-
+@compile
 class TopLevelRunner(HasEnvironment):
     def build(self,
               fragment: ExpFragment,
@@ -557,7 +559,9 @@ def make_fragment_scan_exp(
     return FragmentScanShim
 
 
+@compile
 class _FragmentRunner(HasEnvironment):
+    core: KernelInvariant[Optional[Core]] # could be a host kernel...
     """Object wrapping fragment execution to be able to execute everything in one kernel
     invocation (no difference for non-kernel fragments).
     """
