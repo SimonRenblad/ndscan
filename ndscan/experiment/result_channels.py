@@ -4,6 +4,7 @@ Result handling building blocks.
 
 from artiq.language import HasEnvironment, kernel, portable, rpc, Kernel, KernelInvariant, compile, units
 from typing import Any, Generic, TypeVar
+from numpy import int32
 from .utils import dump_json
 
 __all__ = [
@@ -226,11 +227,7 @@ class ResultChannel:
         """
         self.sink = sink
 
-    @rpc(flags={"async"})
-    def push(self, raw_value) -> None:
-        """
-        """
-        value = self._coerce_to_type(raw_value)
+    def push(self, value):
         if self.sink:
             self.sink.push(value)
 
@@ -240,13 +237,12 @@ class ResultChannel:
     def _coerce_to_type(self, value):
         raise NotImplementedError()
 
-T = TypeVar("T")
+
+T = TypeVar("T", float, int32)
 
 
 @compile
 class NumericChannel(ResultChannel, Generic[T]):
-    _value_pushed: Kernel[bool]
-    _last_value: Kernel[T]
     r"""Base class for :class:`ResultChannel`\ s of numerical results, with scale/unit
     semantics and optional range limits.
 
@@ -282,34 +278,11 @@ class NumericChannel(ResultChannel, Generic[T]):
         self.scale = scale
         self.unit = unit
 
-        self._value_pushed: bool = False
-        self._last_value = self._coerce_to_type(0)
-
-    @kernel
-    def get_last(self):
-        """ Returns the last value pushed to this result channel.
-
-        This method is a workaround for limitations of ARTIQ python, which make it
-        impractical to extract values from the sinks without going through RPCs.
-        """
-        if not self._value_pushed:
-            raise RuntimeError("No value pushed to channel")
-
-        return self._last_value
-
-    @portable
-    def push(self, raw_value) -> None:
-        """
-        """
-        self._value_pushed = True
-        self._last_value = raw_value
-        self._push(raw_value)
-
     @rpc(flags={"async"})
-    def _push(self, raw_value) -> None:
+    def _push(self, raw_value: T):
         """
         """
-        super().push(raw_value)
+        super().push(self, raw_value)
 
     def describe(self) -> dict[str, Any]:
         """"""
@@ -324,17 +297,62 @@ class NumericChannel(ResultChannel, Generic[T]):
         return result
 
 
-class FloatChannel(NumericChannel):
+@compile
+class FloatChannel(NumericChannel[float]):
     """:class:`NumericChannel` that accepts floating-point results."""
+    _value_pushed: Kernel[bool]
+    _last_value: Kernel[float]
+
+    @kernel
+    def get_last(self) -> float:
+        """ Returns the last value pushed to this result channel.
+
+        This method is a workaround for limitations of ARTIQ python, which make it
+        impractical to extract values from the sinks without going through RPCs.
+        """
+        if not self._value_pushed:
+            raise RuntimeError("No value pushed to channel")
+
+        return self._last_value
+
+    @portable
+    def push(self, raw_value: float):
+        """
+        """
+        self._value_pushed = True
+        self._last_value = raw_value
+        super()._push(raw_value)
+
     def _get_type_string(self):
         return "float"
 
-    def _coerce_to_type(self, value):
-        return float(value)
 
-
-class IntChannel(NumericChannel):
+@compile
+class IntChannel(NumericChannel[int32]):
     """:class:`NumericChannel` that accepts integer results."""
+    _value_pushed: Kernel[bool]
+    _last_value: Kernel[int32]
+
+    @kernel
+    def get_last(self) -> int32:
+        """ Returns the last value pushed to this result channel.
+
+        This method is a workaround for limitations of ARTIQ python, which make it
+        impractical to extract values from the sinks without going through RPCs.
+        """
+        if not self._value_pushed:
+            raise RuntimeError("No value pushed to channel")
+
+        return self._last_value
+
+    @portable
+    def push(self, raw_value: int32):
+        """
+        """
+        self._value_pushed = True
+        self._last_value = raw_value
+        self.super()._push(raw_value)
+
     def _get_type_string(self):
         return "int"
 

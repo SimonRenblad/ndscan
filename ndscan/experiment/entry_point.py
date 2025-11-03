@@ -11,7 +11,7 @@ The two main entry points into the :class:`.ExpFragment` universe are
 """
 
 from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYONValue,
-                            rpc, TerminationRequested, KernelInvariant, compile, Option)
+                            rpc, TerminationRequested, KernelInvariant, compile, Option, virtual)
 from artiq.coredevice.core import Core
 from artiq.coredevice.exceptions import RTIOUnderflow
 from collections import OrderedDict
@@ -235,6 +235,8 @@ class ArgumentInterface(HasEnvironment):
 
 @compile
 class TopLevelRunner(HasEnvironment):
+    core: KernelInvariant[Core]
+
     def build(self,
               fragment: ExpFragment,
               spec: ScanSpec,
@@ -422,15 +424,20 @@ class TopLevelRunner(HasEnvironment):
             self._set_completed()
 
     @kernel
-    def _run_continuous_kernel(self):
+    def _run_continuous_kernel(self) -> bool:
         self.core.reset()
         return self._continuous_loop()
 
+    # HACK: https://git.m-labs.hk/M-Labs/nac3/issues/282
+    @rpc
+    def sched_check_pause(self) -> bool:
+        self.scheduler.check_pause()
+        
     @portable
-    def _continuous_loop(self):
+    def _continuous_loop(self) -> bool:
         # TODO: Unify with _FragmentRunner.
         try:
-            while not self.scheduler.check_pause():
+            while not self.sched_check_pause():
                 try:
                     self.fragment.device_setup()
                     self.fragment.run_once()
@@ -556,6 +563,7 @@ def make_fragment_scan_exp(
 
     # Use the fragment class docstring to display in the experiment explorer UI.
     FragmentScanShim.__doc__ = fragment_class.__doc__
+    compile(FragmentScanShim)
 
     return FragmentScanShim
 
@@ -588,12 +596,12 @@ class _FragmentRunner(HasEnvironment):
             return self._run()
 
     @kernel
-    def _run_on_kernel(self):
+    def _run_on_kernel(self) -> bool:
         """Force the portable _run() to run on the kernel."""
         return self._run()
 
     @portable
-    def _run(self):
+    def _run(self) -> bool:
         try:
             while True:
                 try:

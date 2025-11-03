@@ -52,10 +52,10 @@ class Subscan:
 
     def run(
         self,
-        axis_generators: list[tuple[ParamHandle, ScanGenerator]],
-        options: ScanOptions = ScanOptions(),
-        execute_default_analyses: bool = True
-    ) -> tuple[dict[ParamHandle, list], dict[ResultChannel, list]]:
+        axis_generators,
+        options=ScanOptions(),
+        execute_default_analyses=True
+    ):
         """Run the subscan with the given axis iteration specifications, and return the
         data point coordinates/result channel values.
 
@@ -106,13 +106,13 @@ class Subscan:
             generate_points(self._spec.generators, self._spec.options))
 
     @portable
-    def acquire(self, execute_default_analyses=False):
+    def acquire(self, execute_default_analyses: bool = False):
         if not self._runner.acquire():
             raise RestartKernelTransitoryError("Subscan interrupted by pause request")
         self._finalize(execute_default_analyses)
 
     @rpc(flags={"async"})
-    def _finalize(self, execute_default_analyses):
+    def _finalize(self, execute_default_analyses: bool):
         # Return is ignored for on-kernel-friendly scans.
         self._push_results(execute_default_analyses)
         # Prepare for next subscan.

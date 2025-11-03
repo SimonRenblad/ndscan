@@ -120,7 +120,7 @@ class Fragment(HasEnvironment):
             s.host_setup()
 
     @portable
-    def device_setup(self) -> None:
+    def device_setup(self):
         """Perform core-device-side initialisation.
 
         A typical implementation will make sure that any hardware state represented by
@@ -149,7 +149,7 @@ class Fragment(HasEnvironment):
         self.device_setup_subfragments()
 
     @portable
-    def device_setup_subfragments(self) -> None:
+    def device_setup_subfragments(self):
         """Call :meth:`device_setup` on all subfragments.
 
         This is the default implementation for :meth:`device_setup`, but is kept
@@ -199,11 +199,11 @@ class Fragment(HasEnvironment):
                 logger.exception("Cleanup failed for '%s'", s._stringize_path())
 
     @rpc(flags={"async"})
-    def _log_failed_cleanup_host(self, path: str) -> None:
+    def _log_failed_cleanup_host(self, path: str):
         logger.error(f"device_cleanup() failed for '{path}'.")
 
     @portable
-    def device_cleanup(self) -> None:
+    def device_cleanup(self):
         """Perform core-device-side teardown.
 
         This is the equivalent of :meth:`device_setup`, run after the main experiment.
@@ -228,7 +228,7 @@ class Fragment(HasEnvironment):
         self.device_cleanup_subfragments()
 
     @portable
-    def device_cleanup_subfragments(self) -> None:
+    def device_cleanup_subfragments(self):
         """Call :meth:`device_cleanup` on all subfragments.
 
         This is the default implementation for :meth:`device_cleanup`, but is kept
@@ -706,6 +706,7 @@ class Fragment(HasEnvironment):
             return default
 
 
+@compile
 class ExpFragment(Fragment):
     """Fragment that supports the notion of being run to produce results."""
     def prepare(self) -> None:

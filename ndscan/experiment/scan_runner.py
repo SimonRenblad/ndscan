@@ -31,6 +31,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+@compile
 @dataclass
 class ScanAxis:
     """Describes a single axis that is being scanned.
@@ -58,6 +59,7 @@ class ScanSpec:
     options: ScanOptions
 
 
+@compile
 class ScanRunner(HasEnvironment):
     """Runs the actual loop that executes an :class:`.ExpFragment` for a specified list
     of scan axes (on either the host or core device, as appropriate).
@@ -87,8 +89,7 @@ class ScanRunner(HasEnvironment):
         self.setattr_device("core")
         self.setattr_device("scheduler")
 
-    def run(self, fragment: ExpFragment, spec: ScanSpec,
-            axis_sinks: list[ResultSink]) -> None:
+    def run(self, fragment, spec, axis_sinks) -> None:
         """Run a scan of the given fragment, with axes as specified.
 
         Integrates with the ARTIQ scheduler to pause/terminate execution as requested.
@@ -121,11 +122,10 @@ class ScanRunner(HasEnvironment):
                     self.core.close()
             self.scheduler.pause()
 
-    def setup(self, fragment: ExpFragment, axes: list[ScanAxis],
-              axis_sinks: list[ResultSink]) -> None:
+    def setup(self, fragment, axes, axis_sinks):
         raise NotImplementedError
 
-    def set_points(self, points: Iterator[tuple]) -> None:
+    def set_points(self, points):
         raise NotImplementedError
 
     def acquire(self) -> bool:
@@ -146,9 +146,9 @@ class ResultBatcher:
     datasets/… (where the indices in the struct-of-arrays construction no longer match
     up).
     """
-    def __init__(self, fragment: ExpFragment) -> None:
+    def __init__(self, fragment) -> None:
         self._fragment = fragment
-        self._orig_sinks = dict[ResultChannel, ResultSink]()
+        self._orig_sinks = dict()
 
     def install(self) -> None:
         """Start intercepting results."""
@@ -240,10 +240,6 @@ class HostScanRunner(ScanRunner):
 
 @compile
 class KernelScanRunner(ScanRunner):
-    _fragment: KernelInvariant[ExpFragment]
-    _axes: KernelInvariant[list[ScanAxis]]
-    _axis_sinks: KernelInvariant[list[ResultSink]]
-    _result_batcher: KernelInvariant[ResultBatcher | None]
     # Note: ARTIQ Python is currently severely limited in its support for generics or
     # metaprogramming. While the interface for this class is effortlessly generic, the
     # implementation might well be a long-forgotten ritual for invoking Cthulhu.
