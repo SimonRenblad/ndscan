@@ -2,9 +2,8 @@
 Result handling building blocks.
 """
 
-from artiq.language import HasEnvironment, kernel, portable, rpc, Kernel, KernelInvariant
-import artiq.language.units
-from typing import Any, Generic
+from artiq.language import HasEnvironment, kernel, portable, rpc, Kernel, KernelInvariant, compile, units
+from typing import Any, Generic, TypeVar
 from .utils import dump_json
 
 __all__ = [
@@ -276,7 +275,7 @@ class NumericChannel(ResultChannel, Generic[T]):
                 scale = 1.0
             else:
                 try:
-                    scale = getattr(artiq.language.units, unit)
+                    scale = getattr(units, unit)
                 except AttributeError:
                     raise KeyError("Unit {} is unknown, you must specify "
                                    "the scale manually".format(unit))

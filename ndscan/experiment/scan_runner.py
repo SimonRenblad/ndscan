@@ -8,8 +8,9 @@ will likely be used by end users via
 
 import logging
 import numpy as np
+from numpy import int32
 from artiq.coredevice.exceptions import RTIOUnderflow
-from artiq.language import HasEnvironment, host_only, kernel, kernel_from_string, rpc
+from artiq.language import HasEnvironment, kernel, rpc, KernelInvariant, compile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
@@ -287,7 +288,7 @@ class KernelScanRunner(ScanRunner):
             return self._RUN_CHUNK_SCAN_COMPLETE
         for i in len(chunk[0]):
             for p in range(len(chunk)):
-]               self._axes[p].param_store.set_value(chunk[p][i])
+                self._axes[p].param_store.set_value(chunk[p][i])
             if self._run_point():
                 return self._RUN_CHUNK_INTERRUPTED
         return self._RUN_CHUNK_PROCEED
@@ -427,7 +428,6 @@ class KernelScanRunner(ScanRunner):
         # Prepare for the next point.
         self._update_host_param_stores()
 
-    @host_only
     def _update_host_param_stores(self):
         """Set host-side parameter stores for the scan axes to their current values,
         i.e. as specified by the next point in the current scan chunk.
@@ -443,7 +443,6 @@ class KernelScanRunner(ScanRunner):
         for value, axis in zip(next_values, self._axes):
             axis.param_store.set_value(axis.param_store.value_from_pyon(value))
 
-    @host_only
     def _is_out_of_points(self):
         if self._current_chunk:
             return False

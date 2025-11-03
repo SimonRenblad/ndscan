@@ -6,7 +6,7 @@ another child fragment as part of its execution.
 from collections import OrderedDict
 from copy import copy
 from functools import reduce
-from artiq.language import kernel, portable, rpc
+from artiq.language import kernel, portable, rpc, compile
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, Fragment, RestartKernelTransitoryError
 from .parameters import ParamHandle

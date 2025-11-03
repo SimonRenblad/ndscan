@@ -11,7 +11,8 @@ The two main entry points into the :class:`.ExpFragment` universe are
 """
 
 from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYONValue,
-                            rpc, TerminationRequested)
+                            rpc, TerminationRequested, KernelInvariant, compile, Option)
+from artiq.coredevice.core import Core
 from artiq.coredevice.exceptions import RTIOUnderflow
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -561,7 +562,7 @@ def make_fragment_scan_exp(
 
 @compile
 class _FragmentRunner(HasEnvironment):
-    core: KernelInvariant[Optional[Core]] # could be a host kernel...
+    core: KernelInvariant[Option[Core]] # could be a host kernel...
     """Object wrapping fragment execution to be able to execute everything in one kernel
     invocation (no difference for non-kernel fragments).
     """
