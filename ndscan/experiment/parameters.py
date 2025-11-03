@@ -14,7 +14,7 @@ with the appropriate type argument (:class:`FloatParam`, :class:`IntParam`,
 from artiq.language import portable, units, Kernel, KernelInvariant, compile, Option
 from enum import Enum
 from numpy import int32
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Generic, TypeVar
 from ..utils import eval_param_default, GetDataset
 
 __all__ = [
@@ -46,7 +46,7 @@ class ParamStore:
         self._handles = []
         self._notify = self._do_nothing
 
-        self._value = self.coerce(value)
+        self._value = value
 
     def _register_handle(self, handle):
         # Private to this module (part of the handle change_after_used tracking).
@@ -60,44 +60,15 @@ class ParamStore:
         if not self._handles:
             self._notify = self._do_nothing
 
-    #: The type to use for this parameter in the RPC layer (to be overridden by
-    #: subclasses).
-    RpcType = Any
-
-    @portable
-    def get_value(self) -> Any:
-        raise NotImplementedError
-
-    @portable
-    def set_value(self, value: Any) -> None:
-        raise NotImplementedError
-
-    @portable
-    def coerce(self, value: Any) -> Any:
-        raise NotImplementedError
-
-    def to_rpc_type(self, value) -> RpcType:
-        """For types that need to be represented differently in the RPC layer (enums),
-        convert the value from overrides/scan generators/etc. to the type used across
-        the RPC interface.
-        """
-        return value
-
-    @portable
-    def set_from_rpc(self, value) -> None:
-        """For types that need to be represented differently in the RPC layer (enums),
-        convert the value back to the type used in the kernel.
-        """
-        self.set_value(value)
-
     @classmethod
     def value_from_pyon(cls, value):
         """
         """
         return value
 
-@compile
+
 class FloatParamStore(ParamStore):
+    _value: Kernel[float]
     RpcType = float
 
     @portable
@@ -114,23 +85,20 @@ class FloatParamStore(ParamStore):
         return self._value
 
     @portable
-    def set_value(self, value):
-        new_value = self.coerce(value)
-        if new_value == self._value:
+    def set_value(self, value: float):
+        if value == self._value:
             return
-        self._value = new_value
+        self._value = value
         self._notify()
 
     @portable
-    def coerce(self, value: T):
-        return float(value)
-
-    @portable
-    def set_from_rpc(self, value: T) -> None:
+    def set_from_rpc(self, value: float):
         self.set_value(value)
 
 
 class IntParamStore(ParamStore):
+    _value: Kernel[int32]
+
     RpcType = int32
 
     @portable
@@ -147,23 +115,20 @@ class IntParamStore(ParamStore):
         return self._value
 
     @portable
-    def set_value(self, value):
-        new_value = self.coerce(value)
-        if new_value == self._value:
+    def set_value(self, value: int32):
+        if value == self._value:
             return
-        self._value = new_value
+        self._value = value
         self._notify()
 
     @portable
-    def coerce(self, value):
-        return int32(value)
-
-    @portable
-    def set_from_rpc(self, value) -> None:
+    def set_from_rpc(self, value: int32):
         self.set_value(value)
 
 
 class StringParamStore(ParamStore):
+    _value: str
+
     RpcType = str
 
     @portable
@@ -180,24 +145,19 @@ class StringParamStore(ParamStore):
         return self._value
 
     @portable
-    def set_value(self, value):
-        new_value = self.coerce(value)
-        if new_value == self._value:
+    def set_value(self, value: str):
+        if value == self._value:
             return
-        self._value = new_value
+        self._value = value
         self._notify()
 
     @portable
-    def coerce(self, value):
-        return value
-
-    @portable
-    def set_from_rpc(self, value) -> None:
+    def set_from_rpc(self, value: str):
         self.set_value(value)
 
 
 class BoolParamStore(ParamStore):
-    RpcType = bool
+    _value: bool
 
     @portable
     def _notify_handles(self):
@@ -213,22 +173,18 @@ class BoolParamStore(ParamStore):
         return self._value
 
     @portable
-    def set_value(self, value):
-        new_value = self.coerce(value)
-        if new_value == self._value:
+    def set_value(self, value: bool):
+        if value == self._value:
             return
-        self._value = new_value
+        self._value = value
         self._notify()
 
     @portable
-    def coerce(self, value):
-        return bool(value)
-
-    @portable
-    def set_from_rpc(self, value) -> None:
+    def set_from_rpc(self, value: bool):
         self.set_value(value)
 
 
+@compile
 class ParamHandle:
     """
     Each instance of this class corresponds to exactly one attribute of a fragment that
@@ -273,7 +229,10 @@ class ParamHandle:
         return self._changed_after_use
 
 
+@compile
 class FloatParamHandle(ParamHandle):
+    _store: Kernel[FloatParamStore]
+    
     @portable
     def get(self) -> float:
         return self._store.get_value()
@@ -284,7 +243,10 @@ class FloatParamHandle(ParamHandle):
         return self._store.get_value()
 
 
+@compile
 class IntParamHandle(ParamHandle):
+    _store: Kernel[IntParamStore]
+    
     @portable
     def get(self) -> int32:
         return self._store.get_value()
@@ -295,7 +257,10 @@ class IntParamHandle(ParamHandle):
         return self._store.get_value()
 
 
+@compile
 class StringParamHandle(ParamHandle):
+    _store: Kernel[StringParamStore]
+
     @portable
     def get(self) -> str:
         return self._store.get_value()
@@ -306,7 +271,10 @@ class StringParamHandle(ParamHandle):
         return self._store.get_value()
 
 
+@compile
 class BoolParamHandle(ParamHandle):
+    _store: Kernel[BoolParamStore]
+    
     @portable
     def get(self) -> bool:
         return self._store.get_value()
@@ -315,11 +283,6 @@ class BoolParamHandle(ParamHandle):
     def use(self) -> bool:
         self._changed_after_use = False
         return self._store.get_value()
-
-
-# HACK: class vars are evaluated at define time, so ParamHandle cannot be found
-ParamStore._handles: KernelInvariant[list[ParamHandle[T]]]
-compile(ParamStore)
 
 
 def resolve_numeric_scale(scale: float | None, unit: str) -> float:
@@ -332,6 +295,16 @@ def resolve_numeric_scale(scale: float | None, unit: str) -> float:
     except AttributeError:
         raise KeyError("Unit '{}' is unknown, you must specify "
                        "the scale manually".format(unit))
+
+
+FloatParamStore._handles: Kernel[list[FloatParamHandle]]
+compile(FloatParamStore)
+IntParamStore._handles: Kernel[list[IntParamHandle]]
+compile(IntParamStore)
+StringParamStore._handles: Kernel[list[StringParamHandle]]
+compile(StringParamStore)
+BoolParamStore._handles: Kernel[list[BoolParamHandle]]
+compile(BoolParamStore)
 
 
 class ParamBase:
@@ -611,7 +584,6 @@ def _get_enum_compiler_types(
         # relying on type inference).
 
         class EnumParamStore(ParamStore):
-            RpcType = int32
             # TODO: Make sure this is emitted efficiently as a global by the compiler.
             instances = [o for o in enum_type]
 
@@ -635,17 +607,11 @@ def _get_enum_compiler_types(
                 self._value = value
                 self._notify()
 
-            @portable
-            def coerce(self, value):
-                # Can't ensure type matches on compiler, since enums are arbitrary
-                # classes as far as the ARTIQ compiler is concerned.
-                return value
-
             def to_rpc_type(self, value: enum_type) -> RpcType:
                 return self.instances.index(value)
 
             @portable
-            def set_from_rpc(self, value: RpcType):
+            def set_from_rpc(self, value: int32):
                 self.set_value(self.instances[value])
 
             @classmethod
