@@ -6,6 +6,7 @@ import numpy as np
 import time
 
 
+@compile
 class Readout(Fragment):
     def build_fragment(self):
         self.setattr_param("num_shots",
@@ -44,6 +45,7 @@ class InitialState(Enum):
     bright = "Bright"
 
 
+@compile
 class RabiFlopSim(ExpFragment):
     def build_fragment(self):
         self.setattr_fragment("readout", Readout)
