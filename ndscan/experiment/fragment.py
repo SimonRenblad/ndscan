@@ -165,9 +165,13 @@ class Fragment(HasEnvironment):
         `self` type.)
         """
         for s in self._subfragments:
-            if s in self._detached_subfragments:
-                continue
-            s.device_setup()
+            do_setup = True
+            for d in self._detached_subfragments:
+                if d == s:
+                    do_setup = False
+                    break
+            if do_setup:
+                s.device_setup()
 
     def host_cleanup(self):
         """Perform host-side cleanup after an experiment has been run.
@@ -252,12 +256,16 @@ class Fragment(HasEnvironment):
         to be generic on the `self` type.)
         """
         for s in self._subfragments[::-1]:
-            if s in self._detached_subfragments:
-                continue
-            try:
-                s.device_cleanup()
-            except:
-                self._log_failed_cleanup_host(s._stringize_path())
+            do_cleanup = True
+            for d in self._detached_subfragments:
+                if d == s:
+                    do_cleanup = False
+                    break
+            if do_cleanup:
+                try:
+                    s.device_cleanup()
+                except:
+                    self._log_failed_cleanup_host(s._stringize_path())
 
     def build_fragment(self, *args, **kwargs) -> None:
         """Initialise this fragment, building up the hierarchy of subfragments,
