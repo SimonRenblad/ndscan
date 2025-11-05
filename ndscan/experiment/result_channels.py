@@ -351,7 +351,7 @@ class IntChannel(NumericChannel[int32]):
         """
         self._value_pushed = True
         self._last_value = raw_value
-        self.super()._push(raw_value)
+        super()._push(raw_value)
 
     def _get_type_string(self):
         return "int"

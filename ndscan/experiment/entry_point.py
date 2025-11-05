@@ -236,6 +236,7 @@ class ArgumentInterface(HasEnvironment):
 @compile
 class TopLevelRunner(HasEnvironment):
     core: KernelInvariant[Core]
+    fragment: KernelInvariant[ExpFragment]
 
     def build(self,
               fragment: ExpFragment,
@@ -570,7 +571,8 @@ def make_fragment_scan_exp(
 
 @compile
 class _FragmentRunner(HasEnvironment):
-    core: KernelInvariant[Option[Core]] # could be a host kernel...
+    core: KernelInvariant[Core]
+    fragment: KernelInvariant[ExpFragment]
     """Object wrapping fragment execution to be able to execute everything in one kernel
     invocation (no difference for non-kernel fragments).
     """

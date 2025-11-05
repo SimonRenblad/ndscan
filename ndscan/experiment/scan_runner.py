@@ -8,9 +8,10 @@ will likely be used by end users via
 
 import logging
 import numpy as np
-from numpy import int32
+from numpy import int32, int64
 from artiq.coredevice.exceptions import RTIOUnderflow
-from artiq.language import HasEnvironment, kernel, rpc, KernelInvariant, compile
+from artiq.coredevice.core import Core
+from artiq.language import HasEnvironment, kernel, rpc, KernelInvariant, compile, Kernel
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
@@ -238,8 +239,17 @@ class HostScanRunner(ScanRunner):
                 self._fragment.device_cleanup()
 
 
+_RUN_CHUNK_PROCEED = 0
+_RUN_CHUNK_INTERRUPTED = 1
+_RUN_CHUNK_SCAN_COMPLETE = 2
+
+
 @compile
 class KernelScanRunner(ScanRunner):
+    core: KernelInvariant[Core]
+    _fragment: KernelInvariant[ExpFragment]
+    _pause_check_interval_mu: KernelInvariant[int64]
+    _last_pause_check_mu: Kernel[int64]
     # Note: ARTIQ Python is currently severely limited in its support for generics or
     # metaprogramming. While the interface for this class is effortlessly generic, the
     # implementation might well be a long-forgotten ritual for invoking Cthulhu.
@@ -273,21 +283,17 @@ class KernelScanRunner(ScanRunner):
         self._current_chunk = []
         self._update_host_param_stores()
 
-    _RUN_CHUNK_PROCEED = 0
-    _RUN_CHUNK_INTERRUPTED = 1
-    _RUN_CHUNK_SCAN_COMPLETE = 2
-
     @kernel
     def _run_chunk(self) -> int32:
-        chunk = self.get_param_values_chunk()
+        chunk = self._get_param_values_chunk()
         if len(chunk) == 0:
-            return self._RUN_CHUNK_SCAN_COMPLETE
-        for i in len(chunk[0]):
+            return _RUN_CHUNK_SCAN_COMPLETE
+        for i in range(len(chunk[0])):
             for p in range(len(chunk)):
                 self._axes[p].param_store.set_value(chunk[p][i])
             if self._run_point():
-                return self._RUN_CHUNK_INTERRUPTED
-        return self._RUN_CHUNK_PROCEED
+                return _RUN_CHUNK_INTERRUPTED
+        return _RUN_CHUNK_PROCEED
 
     @rpc(flags={"async"})
     def _install_result_batcher(self):

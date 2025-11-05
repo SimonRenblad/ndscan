@@ -1,4 +1,5 @@
-from artiq.language import HasEnvironment, kernel, portable, rpc, compile
+from __future__ import annotations
+from artiq.language import HasEnvironment, kernel, portable, rpc, compile, Kernel, KernelInvariant
 from collections import OrderedDict
 from collections.abc import Iterable
 from copy import deepcopy
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 @compile
 class Fragment(HasEnvironment):
+    _subfragments: KernelInvariant[list[Fragment]]
+    _detached_subfragments: KernelInvariant[list[Fragment]]
+
     """Main building block."""
     def build(self, fragment_path: list[str], *args, **kwargs):
         """Initialise this fragment instance; called from the ``HasEnvironment``
@@ -57,7 +61,7 @@ class Fragment(HasEnvironment):
 
         #: Subfragments detached from the normal fragment execution (setup/cleanup,
         #: result channels; e.g. for subscans).
-        self._detached_subfragments = set()
+        self._detached_subfragments = []
 
         klass = self.__class__
         mod = klass.__module__
@@ -565,7 +569,7 @@ class Fragment(HasEnvironment):
             "Can only detach subfragments directly from their parent fragment"
         assert fragment not in self._detached_subfragments, \
             "Subfragment already detached (is there already another subscan?)"
-        self._detached_subfragments.add(fragment)
+        self._detached_subfragments.append(fragment)
 
     def init_params(self,
                     overrides: dict[str, list[tuple[str, ParamStore]]] = {}) -> None:
@@ -877,6 +881,7 @@ class AggregateExpFragment(ExpFragment):
         return analyses
 
 
+@compile
 class TransitoryError(Exception):
     r"""Transitory error encountered while executing a fragment, which is expected to
     clear itself up if it is attempted again without any further changes.
@@ -892,6 +897,7 @@ class TransitoryError(Exception):
     """
 
 
+@compile
 class RestartKernelTransitoryError(TransitoryError):
     """:class:`.TransitoryError` where, as part of recovering from it, the kernel should
     be restarted before retrying.

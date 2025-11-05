@@ -6,14 +6,14 @@ another child fragment as part of its execution.
 from collections import OrderedDict
 from copy import copy
 from functools import reduce
-from artiq.language import kernel, portable, rpc, compile
+from artiq.language import kernel, portable, rpc, compile, KernelInvariant
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, Fragment, RestartKernelTransitoryError
 from .parameters import ParamHandle
 from .result_channels import (ArraySink, LastValueSink, OpaqueChannel, ResultChannel,
                               SubscanChannel)
 from .scan_generator import ScanGenerator, ScanOptions, generate_points
-from .scan_runner import (ScanAxis, ScanRunner, ScanSpec, describe_analyses,
+from .scan_runner import (ScanAxis, KernelScanRunner, ScanSpec, describe_analyses,
                           describe_scan, filter_default_analyses, select_runner_class)
 from .utils import is_kernel
 from ..utils import merge_no_duplicates, shorten_to_unambiguous_suffixes
@@ -23,12 +23,13 @@ __all__ = ["setattr_subscan", "Subscan", "SubscanExpFragment"]
 
 @compile
 class Subscan:
+    _runner: KernelInvariant[KernelScanRunner]
     """Handle returned by :meth:`setattr_subscan`, allowing the subscan to actually be
     executed.
     """
     def __init__(
         self,
-        runner: ScanRunner,
+        runner: KernelScanRunner,
         fragment: ExpFragment,
         possible_axes: dict[ParamHandle, ScanAxis],
         schema_channel: SubscanChannel,
@@ -269,6 +270,12 @@ def setattr_subscan(owner: Fragment,
     return subscan
 
 
+@compile
+class SubscanInstance(Subscan):
+    # ARTIQ compiler needs a different type for each RunnerInstance.
+    pass
+
+
 def setup_subscan(result_target: Fragment,
                   name_prefix: str,
                   scanned_fragment: ExpFragment,
@@ -360,9 +367,6 @@ def setup_subscan(result_target: Fragment,
 
     runner = RunnerInstance(result_target)
 
-    class SubscanInstance(Subscan):
-        # ARTIQ compiler needs a different type for each RunnerInstance.
-        pass
 
     return SubscanInstance(runner, scanned_fragment, axes, spec_channel,
                            coordinate_channels, child_result_sinks,
@@ -460,6 +464,8 @@ class SubscanExpFragment(ExpFragment):
 
             # configure_scan(), host_setup() and device_setup() as above.
     """
+    _subscan: KernelInvariant[SubscanInstance]
+
     def build_fragment(self,
                        scanned_fragment_parent: Fragment,
                        scanned_fragment: ExpFragment | str,
