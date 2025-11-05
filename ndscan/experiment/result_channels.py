@@ -303,6 +303,11 @@ class FloatChannel(NumericChannel[float]):
     _value_pushed: Kernel[bool]
     _last_value: Kernel[float]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_value = 0.0
+        self._value_pushed = False
+
     @kernel
     def get_last(self) -> float:
         """ Returns the last value pushed to this result channel.
