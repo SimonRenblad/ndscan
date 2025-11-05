@@ -11,7 +11,7 @@ The two main entry points into the :class:`.ExpFragment` universe are
 """
 
 from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYONValue,
-                            rpc, TerminationRequested, KernelInvariant, compile, Option, virtual)
+                            rpc, TerminationRequested, KernelInvariant, Kernel, compile, Option, virtual)
 from artiq.coredevice.core import Core
 from artiq.coredevice.exceptions import RTIOUnderflow
 from collections import OrderedDict
@@ -22,6 +22,7 @@ import logging
 import random
 import time
 from typing import Any
+from numpy import int32
 
 from .default_analysis import AnnotationContext
 from .fragment import (ExpFragment, Fragment, RestartKernelTransitoryError,
@@ -237,6 +238,11 @@ class ArgumentInterface(HasEnvironment):
 class TopLevelRunner(HasEnvironment):
     core: KernelInvariant[Core]
     fragment: KernelInvariant[ExpFragment]
+    _continue_running: Kernel[bool]
+    num_current_transitory_errors: Kernel[int32]
+    num_current_underflows: Kernel[int32]
+    max_rtio_underflow_retries: KernelInvariant[int32]
+    max_transitory_error_retries: KernelInvariant[int32]
 
     def build(self,
               fragment: ExpFragment,
@@ -454,25 +460,25 @@ class TopLevelRunner(HasEnvironment):
                     self.num_current_underflows += 1
                     if self.num_current_underflows > self.max_rtio_underflow_retries:
                         raise
-                    print("Ignoring RTIOUnderflow (", self.num_current_underflows, "/",
-                          self.max_rtio_underflow_retries, ")")
+                    # print("Ignoring RTIOUnderflow (", self.num_current_underflows, "/",
+                    #       self.max_rtio_underflow_retries, ")")
                 except RestartKernelTransitoryError:
                     self.num_current_transitory_errors += 1
                     if (self.num_current_transitory_errors >
                             self.max_transitory_error_retries):
                         raise
-                    print("Caught transitory error (",
-                          self.num_current_transitory_errors, "/",
-                          self.max_transitory_error_retries, "), restarting kernel")
+                    # print("Caught transitory error (",
+                    #       self.num_current_transitory_errors, "/",
+                    #       self.max_transitory_error_retries, "), restarting kernel")
                     return False
                 except TransitoryError:
                     self.num_current_transitory_errors += 1
                     if (self.num_current_transitory_errors >
                             self.max_transitory_error_retries):
                         raise
-                    print("Caught transitory error (",
-                          self.num_current_transitory_errors, "/",
-                          self.max_transitory_error_retries, "), retrying")
+                    # print("Caught transitory error (",
+                    #       self.num_current_transitory_errors, "/",
+                    #       self.max_transitory_error_retries, "), retrying")
             return False
         finally:
             self.fragment.device_cleanup()
@@ -573,6 +579,11 @@ def make_fragment_scan_exp(
 class _FragmentRunner(HasEnvironment):
     core: KernelInvariant[Core]
     fragment: KernelInvariant[ExpFragment]
+    num_overflows_caught: Kernel[int32]
+    num_underflows_caught: Kernel[int32]
+    num_transitory_errors_caught: Kernel[int32]
+    max_rtio_underflow_retries: KernelInvariant[int32]
+    max_transitory_error_retries: KernelInvariant[int32]
     """Object wrapping fragment execution to be able to execute everything in one kernel
     invocation (no difference for non-kernel fragments).
     """
@@ -614,23 +625,23 @@ class _FragmentRunner(HasEnvironment):
                     self.num_underflows_caught += 1
                     if self.num_underflows_caught > self.max_rtio_underflow_retries:
                         raise
-                    print("Ignoring RTIOUnderflow (", self.num_underflows_caught, "/",
-                          self.max_rtio_underflow_retries, ")")
+                    # print("Ignoring RTIOUnderflow (", self.num_underflows_caught, "/",
+                    #       self.max_rtio_underflow_retries, ")")
                 except RestartKernelTransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.max_transitory_error_retries):
                         raise
-                    print("Caught transitory error, restarting kernel")
+                    # print("Caught transitory error, restarting kernel")
                     return False
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.max_transitory_error_retries):
                         raise
-                    print("Caught transitory error (",
-                          self.num_transitory_errors_caught, "/",
-                          self.max_transitory_error_retries, "), retrying")
+                    # print("Caught transitory error (",
+                    #       self.num_transitory_errors_caught, "/",
+                    #       self.max_transitory_error_retries, "), retrying")
         finally:
             self.fragment.device_cleanup()
         assert False, "Execution never reaches here, return is just to pacify compiler."

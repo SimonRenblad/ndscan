@@ -282,7 +282,7 @@ class NumericChannel(ResultChannel, Generic[T]):
     def _push(self, raw_value: T):
         """
         """
-        super().push(self, raw_value)
+        ResultChannel.push(self, raw_value)
 
     def describe(self) -> dict[str, Any]:
         """"""
@@ -321,7 +321,7 @@ class FloatChannel(NumericChannel[float]):
         """
         self._value_pushed = True
         self._last_value = raw_value
-        super()._push(raw_value)
+        NumericChannel._push(self, raw_value)
 
     def _get_type_string(self):
         return "float"
@@ -351,7 +351,7 @@ class IntChannel(NumericChannel[int32]):
         """
         self._value_pushed = True
         self._last_value = raw_value
-        super()._push(raw_value)
+        NumericChannel._push(self, raw_value)
 
     def _get_type_string(self):
         return "int"

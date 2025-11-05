@@ -287,6 +287,7 @@ def resolve_numeric_scale(scale: float | None, unit: str) -> float:
                        "the scale manually".format(unit))
 
 
+@compile
 class ParamBase:
     HandleType = ParamHandle
     StoreType = ParamStore
@@ -313,6 +314,7 @@ class ParamBase:
         raise NotImplementedError
 
 
+@compile
 class FloatParam(ParamBase):
     """
     """

@@ -18,7 +18,7 @@ from itertools import islice
 from typing import Any
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, TransitoryError, RestartKernelTransitoryError
-from .parameters import ParamStore
+from .parameters import FloatParamStore
 from .result_channels import ResultChannel, ResultSink, SingleUseSink
 from .scan_generator import generate_points, ScanGenerator, ScanOptions
 from .utils import is_kernel
@@ -43,7 +43,7 @@ class ScanAxis:
     """
     param_schema: dict[str, Any]
     path: str
-    param_store: ParamStore
+    param_store: KernelInvariant[FloatParamStore]
 
 
 @dataclass
@@ -62,6 +62,9 @@ class ScanSpec:
 
 @compile
 class ScanRunner(HasEnvironment):
+    max_rtio_underflow_retries: KernelInvariant[int32]
+    max_transitory_error_retries: KernelInvariant[int32]
+    skip_on_persistent_transitory_error: KernelInvariant[bool]
     """Runs the actual loop that executes an :class:`.ExpFragment` for a specified list
     of scan axes (on either the host or core device, as appropriate).
     """
@@ -250,6 +253,7 @@ class KernelScanRunner(ScanRunner):
     _fragment: KernelInvariant[ExpFragment]
     _pause_check_interval_mu: KernelInvariant[int64]
     _last_pause_check_mu: Kernel[int64]
+    _axes: KernelInvariant[list[ScanAxis]]
     # Note: ARTIQ Python is currently severely limited in its support for generics or
     # metaprogramming. While the interface for this class is effortlessly generic, the
     # implementation might well be a long-forgotten ritual for invoking Cthulhu.
@@ -314,12 +318,12 @@ class KernelScanRunner(ScanRunner):
                 # Fetch chunk in separate function to make sure stack memory is released
                 # every time. (The ARTIQ compiler effectively uses alloca() to provision
                 # memory for RPC return values.)
-                result = self._run_chunk(self)
-                if result == self._RUN_CHUNK_INTERRUPTED:
+                result = self._run_chunk()
+                if result == _RUN_CHUNK_INTERRUPTED:
                     return False
-                if result == self._RUN_CHUNK_SCAN_COMPLETE:
+                if result == _RUN_CHUNK_SCAN_COMPLETE:
                     return True
-                assert result == self._RUN_CHUNK_PROCEED
+                assert result == _RUN_CHUNK_PROCEED
         finally:
             self._remove_result_batcher()
             self._fragment.device_cleanup()
@@ -346,11 +350,11 @@ class KernelScanRunner(ScanRunner):
                 if num_underflows >= self.max_rtio_underflow_retries:
                     raise
                 num_underflows += 1
-                print("Ignoring RTIOUnderflow (", num_underflows, "/",
-                      self.max_rtio_underflow_retries, ")")
+                # print("Ignoring RTIOUnderflow (", num_underflows, "/",
+                #       self.max_rtio_underflow_retries, ")")
                 self._retry_point()
             except RestartKernelTransitoryError:
-                print("Caught transitory error, restarting kernel")
+                # print("Caught transitory error, restarting kernel")
                 self._retry_point()
                 return True
             except TransitoryError:
@@ -360,8 +364,8 @@ class KernelScanRunner(ScanRunner):
                         return False
                     raise
                 num_transitory_errors += 1
-                print("Caught transitory error (", num_transitory_errors, "/",
-                      self.max_transitory_error_retries, "), retrying")
+                # print("Caught transitory error (", num_transitory_errors, "/",
+                #       self.max_transitory_error_retries, "), retrying")
                 self._retry_point()
         self._point_completed()
         return False
