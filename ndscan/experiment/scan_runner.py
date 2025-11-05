@@ -91,7 +91,7 @@ class ScanRunner(HasEnvironment):
         self.max_transitory_error_retries = max_transitory_error_retries
         self.skip_on_persistent_transitory_error = skip_on_persistent_transitory_error
         self.setattr_device("core")
-        self.setattr_device("scheduler")
+        # self.setattr_device("scheduler")
 
     def run(self, fragment, spec, axis_sinks) -> None:
         """Run a scan of the given fragment, with axes as specified.
@@ -124,7 +124,7 @@ class ScanRunner(HasEnvironment):
                 # similar without a close() method.
                 if hasattr(self.core, "close"):
                     self.core.close()
-            self.scheduler.pause()
+            # self.scheduler.pause()
 
     def setup(self, fragment, axes, axis_sinks):
         raise NotImplementedError
@@ -236,8 +236,8 @@ class HostScanRunner(ScanRunner):
                         # complete point, also record the axis coordinates.
                         sink.push(value)
 
-                    if self.scheduler.check_pause():
-                        return False
+                    # if self.scheduler.check_pause():
+                    #     return False
             finally:
                 self._fragment.device_cleanup()
 
@@ -376,8 +376,8 @@ class KernelScanRunner(ScanRunner):
         if (current_time_mu - self._last_pause_check_mu >
                 self._pause_check_interval_mu):
             self._last_pause_check_mu = current_time_mu
-            if self.scheduler.check_pause():
-                return True
+            # if self.scheduler.check_pause():
+            #     return True
         return False
 
     @rpc
