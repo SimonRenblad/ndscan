@@ -122,7 +122,6 @@ class FragmentScanExperiment(EnvExperiment):
                                      "match any parameters (likely due to changes " +
                                      "since made to the experiment code; try " +
                                      "Recompute All Arguments).")
-
         self.tlr = TopLevelRunner(
             self,
             fragment=self.fragment,

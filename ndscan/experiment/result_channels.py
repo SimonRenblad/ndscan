@@ -3,7 +3,7 @@ Result handling building blocks.
 """
 
 from artiq.language import HasEnvironment, kernel, portable, rpc
-import artiq.language.units
+from artiq.language import units
 from typing import Any
 from .utils import dump_json
 

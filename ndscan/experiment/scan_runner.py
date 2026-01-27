@@ -9,11 +9,16 @@ will likely be used by end users via
 import logging
 import numpy as np
 from artiq.coredevice.exceptions import RTIOUnderflow
-from artiq.language import HasEnvironment, host_only, kernel, kernel_from_string, rpc
+from artiq.language import HasEnvironment, kernel, rpc
+from artiq.tools import load_with_loader
+from artiq.master.worker_impl import StringLoader
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
 from typing import Any
+from string import Template
+import os
+import textwrap
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, TransitoryError, RestartKernelTransitoryError
 from .parameters import ParamStore
@@ -110,6 +115,8 @@ class ScanRunner(HasEnvironment):
                 fragment.host_setup()
 
                 # For on-core-device scans, we'll spawn a kernel here.
+                # TODO: this is where the generated kernel will have to start
+                # everything must be ready for here.
                 if self.acquire():
                     return
             finally:
@@ -237,6 +244,7 @@ class HostScanRunner(ScanRunner):
                 self._fragment.device_cleanup()
 
 
+# this relies on the existence of a kernel_runner_internal which is templated due to the lack of metaprogramming and generics
 class KernelScanRunner(ScanRunner):
     # Note: ARTIQ Python is currently severely limited in its support for generics or
     # metaprogramming. While the interface for this class is effortlessly generic, the
@@ -245,6 +253,13 @@ class KernelScanRunner(ScanRunner):
     def setup(self, fragment: ExpFragment, axes: list[ScanAxis],
               axis_sinks: list[ResultSink]) -> None:
         self._fragment = fragment
+        fragment_class = self._fragment.__class__.__name__
+        fragment_module = fragment.__class__.__module__
+        # template
+        file_dir = os.path.dirname(__file__)
+        with open(os.path.join(file_dir, "kernel_runner_template.py"), "r") as f:
+            s = f.read()
+        self._internal_runner_template = Template(s)
 
         # Set up members to be accessed from the kernel through the
         # _get_param_values_chunk RPC call later.
@@ -256,220 +271,74 @@ class KernelScanRunner(ScanRunner):
         self._pause_check_interval_mu = self.core.seconds_to_mu(0.2)
         self._last_pause_check_mu = np.int64(0)
 
-        # _get_param_values_chunk returns a tuple of lists of values, one for each
-        # scan axis. Synthesize a return type annotation (`def foo(self): -> …`) with
-        # the concrete type for this scan so the compiler can infer the types in
-        # run_chunk() correctly.
-        self._get_param_values_chunk.__func__.__annotations__ = {
-            "return":
-            tuple.__class_getitem__(tuple(list[a.param_store.RpcType] for a in axes))
-        }
+        param_values_return_value = "tuple["
+        param_values_return_value += ", ".join(["list[" + a.param_store.RpcType.__name__ + "]" for a in axes])
+        param_values_return_value += "]"
 
-        # Build kernel function that calls _get_param_values_chunk() and iterates over
-        # the returned values, assigning them to the respective parameter stores and
-        # calling _run_point() for each.
-        #
-        # Currently, this can't be expressed as generic code, as there is no way to
-        # express indexing or deconstructing a tuple of values of inhomogeneous types
-        # without actually writing it out as an assignment from a tuple value.
+        # first all param setter functions
+        param_setters = ""
         for i, axis in enumerate(axes):
-            setattr(self, f"_param_setter_{i}", axis.param_store.set_from_rpc)
-        self._run_chunk = self._build_run_chunk(len(axes))
+            param_setters += "@rpc\n"
+            param_setters += f"def _param_setter_{i}(self, value: {axis.param_store.RpcType.__name__}):\n"
+            param_setters += f"    self._axes[{i}].set_from_rpc(value)\n\n"
+    
+        # then the run_chunk function
+        param_decl = " ".join(f"p{idx}," for idx in range(len(axes)))
+        run_chunk = "@portable\n"
+        run_chunk += "def _run_chunk(self) -> int32:\n"
+        run_chunk += "    " + f"({param_decl}) = self._get_param_values_chunk()\n"
+        run_chunk += "    if len(p0) == 0:\n"  # No more points
+        run_chunk += "        return 2\n"
+        run_chunk += "    for i in range(len(p0)):\n"
+        for idx in range(len(axes)):
+            run_chunk += "        self._param_setter_{0}(p{0}[i])\n".format(idx)
+        run_chunk += "        if self._run_point():\n"
+        run_chunk += "            return 1\n"
+        run_chunk += "    return 0"
+        
+        self._internal_runner_string = self._internal_runner_template.substitute(
+            param_setters=textwrap.indent(param_setters, "    "),
+            run_chunk=textwrap.indent(run_chunk, "    "),
+            param_values_return_value=param_values_return_value,
+            fragment_class=fragment_class,
+            fragment_module=fragment_module
+        )
+        with open(os.path.join(file_dir, "generated/runner.py"), "w+") as f:
+            f.write(self._internal_runner_string)
+        # # TODO the actual runner (for now we will synthezise a string and examine it for issues)
+        # module = load_with_loader(StringLoader("<synthesized>", self._internal_runner_string))
+        from .generated import runner
+        self._internal_runner = runner.InternalKernelScanRunner(
+            self._fragment,
+            self._axes,
+            self._axis_sinks,
+            self.core,
+            self.scheduler,
+            self.max_rtio_underflow_retries,
+            self.max_transitory_error_retries,
+            self.skip_on_persistent_transitory_error,
+        )
+        # # we might have to do this in some other function tbh
+        # self._inner_fragment = fragment_module.InternalFragment()
+        # then pass it along innit
+        # self._internal_runner = module.InternalKernelScanRunner(
+        #   self._fragment,
+        #   self._axes,
+        #   self._axis_sinks
+        # )
 
-        # We'll have to set up the ResultBatcher on the host during the scan to
-        # appropriately handle the results streaming in via async RPCs, so unfortunately
-        # cannot use the context manager API.
-        self._result_batcher: ResultBatcher | None = None
+    def set_points(self, points):
+        self._internal_runner.set_points(points)
 
-    def set_points(self, points: Iterator[tuple]) -> None:
-        self._points = points
-        # Stash away points in current kernel chunk until they have been marked
-        # complete so we can resume from interruptions.
-        self._current_chunk = []
-        self._update_host_param_stores()
-
-    _RUN_CHUNK_PROCEED = 0
-    _RUN_CHUNK_INTERRUPTED = 1
-    _RUN_CHUNK_SCAN_COMPLETE = 2
-
-    def _build_run_chunk(self, num_axes):
-        param_decl = " ".join(f"p{idx}," for idx in range(num_axes))
-        code = ""
-        code += f"({param_decl}) = self._get_param_values_chunk()\n"
-        code += "if not p0:\n"  # No more points
-        code += "    return self._RUN_CHUNK_SCAN_COMPLETE\n"
-        code += "for i in range(len(p0)):\n"
-        for idx in range(num_axes):
-            code += "    self._param_setter_{0}(p{0}[i])\n".format(idx)
-        code += "    if self._run_point():\n"
-        code += "        return self._RUN_CHUNK_INTERRUPTED\n"
-        code += "return self._RUN_CHUNK_PROCEED"
-        return kernel_from_string(["self"], code)
-
-    @rpc(flags={"async"})
-    def _install_result_batcher(self):
-        self._result_batcher = ResultBatcher(self._fragment)
-        self._result_batcher.install()
-
-    @rpc(flags={"async"})
-    def _remove_result_batcher(self):
-        self._result_batcher.remove()
-        self._result_batcher = None
-
-    @kernel
     def acquire(self) -> bool:
-        self._install_result_batcher()
-        try:
-            self._last_pause_check_mu = self.core.get_rtio_counter_mu()
-            while True:
-                # Fetch chunk in separate function to make sure stack memory is released
-                # every time. (The ARTIQ compiler effectively uses alloca() to provision
-                # memory for RPC return values.)
-                result = self._run_chunk(self)
-                if result == self._RUN_CHUNK_INTERRUPTED:
-                    return False
-                if result == self._RUN_CHUNK_SCAN_COMPLETE:
-                    return True
-                assert result == self._RUN_CHUNK_PROCEED
-        finally:
-            self._remove_result_batcher()
-            self._fragment.device_cleanup()
-        assert False, "Execution never reaches here, return is just to pacify compiler."
-        return True
-
-    @kernel
-    def _run_point(self) -> bool:
-        """Execute the fragment for a single point (with the currently set parameters).
-
-        :return: Whether the kernel should be exited/experiment should be paused before
-            continuing (``True`` to pause, ``False`` to continue immediately).
-        """
-        num_underflows = 0
-        num_transitory_errors = 0
-        while True:
-            if self._should_pause():
-                return True
-            try:
-                self._fragment.device_setup()
-                self._fragment.run_once()
-                break
-            except RTIOUnderflow:
-                if num_underflows >= self.max_rtio_underflow_retries:
-                    raise
-                num_underflows += 1
-                print("Ignoring RTIOUnderflow (", num_underflows, "/",
-                      self.max_rtio_underflow_retries, ")")
-                self._retry_point()
-            except RestartKernelTransitoryError:
-                print("Caught transitory error, restarting kernel")
-                self._retry_point()
-                return True
-            except TransitoryError:
-                if num_transitory_errors >= self.max_transitory_error_retries:
-                    if self.skip_on_persistent_transitory_error:
-                        self._skip_point()
-                        return False
-                    raise
-                num_transitory_errors += 1
-                print("Caught transitory error (", num_transitory_errors, "/",
-                      self.max_transitory_error_retries, "), retrying")
-                self._retry_point()
-        self._point_completed()
-        return False
-
-    @kernel
-    def _should_pause(self) -> bool:
-        current_time_mu = self.core.get_rtio_counter_mu()
-        if (current_time_mu - self._last_pause_check_mu >
-                self._pause_check_interval_mu):
-            self._last_pause_check_mu = current_time_mu
-            if self.scheduler.check_pause():
-                return True
-        return False
-
-    @rpc
-    def _get_param_values_chunk(self):
-        # Number of scan points to send at once. After each chunk, the kernel needs to
-        # execute a blocking RPC to fetch new points, so this should be chosen such
-        # that latency/constant overhead and throughput are balanced. 10 is an arbitrary
-        # choice based on the observation that even for fast experiments, 10 points take
-        # a good fraction of a second, while it is still low enough not to run into any
-        # memory management issues on the kernel.
-        CHUNK_SIZE = 10
-
-        self._current_chunk.extend(
-            islice(self._points, CHUNK_SIZE - len(self._current_chunk)))
-
-        values = tuple([] for _ in self._axes)
-        for p in self._current_chunk:
-            for i, (value, axis) in enumerate(zip(p, self._axes)):
-                # KLUDGE: Explicitly coerce value to the target type here so we can use
-                # the regular (float) scans for integers until proper support for int
-                # scans is implemented.
-                values[i].append(
-                    axis.param_store.to_rpc_type(
-                        axis.param_store.coerce(
-                            axis.param_store.value_from_pyon(value))))
-        return values
-
-    @rpc(flags={"async"})
-    def _retry_point(self):
-        self._result_batcher.discard_current()
-
-    @rpc(flags={"async"})
-    def _skip_point(self):
-        self._result_batcher.discard_current()
-        values = self._current_chunk.pop(0)
-        logger.error("Skipping point: %s", values)
-        self._update_host_param_stores()
-
-    @rpc(flags={"async"})
-    def _point_completed(self):
-        # This might raise an exception, which will only bubble up to the user during
-        # the next synchronous RPC request. As this only occurs when the user code
-        # contains a logic error (failure to call push() on a result channel), this
-        # should be acceptable, however.
-        self._result_batcher.ensure_complete_and_push()
-
-        # Now that we know that a complete point was successfully produced, also record
-        # the axis coordinates.
-        values = self._current_chunk.pop(0)
-        for value, sink in zip(values, self._axis_sinks):
-            sink.push(value)
-
-        # Prepare for the next point.
-        self._update_host_param_stores()
-
-    @host_only
-    def _update_host_param_stores(self):
-        """Set host-side parameter stores for the scan axes to their current values,
-        i.e. as specified by the next point in the current scan chunk.
-
-        This ensures that if a parameter is scanned from a kernel scan that requires
-        a host RPC to update (e.g. a non-@kernel device_setup()), the RPC'd code will
-        execute using the expected values.
-        """
-        if self._is_out_of_points():
-            return
-        # Set the host-side parameter stores.
-        next_values = self._current_chunk[0]
-        for value, axis in zip(next_values, self._axes):
-            axis.param_store.set_value(axis.param_store.value_from_pyon(value))
-
-    @host_only
-    def _is_out_of_points(self):
-        if self._current_chunk:
-            return False
-        # Current chunk is empty, but we might be at a chunk boundary.
-        self._get_param_values_chunk()
-        return not self._current_chunk
+        return self._internal_runner.acquire()
 
 
 def select_runner_class(fragment: ExpFragment) -> type[ScanRunner]:
-    if is_kernel(fragment.run_once):
-        return KernelScanRunner
-    else:
-        return HostScanRunner
+    # if is_kernel(fragment.run_once):
+    return KernelScanRunner
+    # else:
+        # return HostScanRunner
 
 
 def match_default_analysis(analysis: DefaultAnalysis, axes: Iterable[ScanAxis]) -> bool:

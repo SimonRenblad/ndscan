@@ -1,9 +1,12 @@
-from artiq.language import HasEnvironment, kernel, kernel_from_string, portable, rpc
+from artiq.language import HasEnvironment, kernel, portable, rpc, compile
 from collections import OrderedDict
 from collections.abc import Iterable
 from copy import deepcopy
 import logging
 from typing import Any, Callable
+import textwrap
+from string import Template
+import os
 
 from .default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
 from .parameters import ParamHandle, ParamStore, ParamBase
@@ -12,28 +15,11 @@ from .utils import is_kernel, path_matches_spec
 from ..utils import strip_prefix
 
 __all__ = [
-    "Fragment", "ExpFragment", "AggregateExpFragment", "TransitoryError",
+    "Fragment", "ExpFragment", "TransitoryError",
     "RestartKernelTransitoryError"
 ]
 
 logger = logging.getLogger(__name__)
-
-
-@rpc(flags={"async"})
-def _log_failed_cleanup_host(path: str) -> None:
-    logger.error(f"device_cleanup() failed for '{path}'.")
-
-
-@portable
-def _log_failed_cleanup(path: str) -> None:
-    """Log error message for failed subfragment ``device_cleanup``.
-
-    Single kernel (well, portable) function, rather than directly an RPC call, to
-    tighten up kernel codegen for multiple cleanups.
-    """
-    # TODO: Figure out how to funnel the original exception details over RPC to provide
-    # a more usable error message to the user.
-    _log_failed_cleanup_host(path)
 
 
 class Fragment(HasEnvironment):
@@ -95,10 +81,21 @@ class Fragment(HasEnvironment):
         self.build_fragment(*args, **kwargs)
         self._building = False
 
+        param_str = ""
+        for key, param in self._free_params.items():
+            param_str += f"{key}: Kernel[{param.CompilerType}]\n"
         # Now that we know all subfragments, synthesise code for device_setup() and
         # device_cleanup() to forward to subfragments.
+        subfrags_types = ""
+        subfrags_imports = ""
+        subfrags_const = ""
         code = ""
         for s in self._subfragments:
+            name = s.__class__.__name__
+            fname = s._fragment_path[-1]
+            subfrags_types += f"    {fname}: Kernel[Wrapper{name}]\n"
+            subfrags_imports += f"from .{name}{fname} import Wrapper{name}\n"
+            subfrags_const += f"if s.__class__.__name__ == '{name}':\n    self.{fname} = Wrapper{name}(s)\n"
             if s in self._detached_subfragments:
                 continue
             if s._has_trivial_device_setup():
@@ -106,15 +103,15 @@ class Fragment(HasEnvironment):
             code += f"self.{s._fragment_path[-1]}.device_setup()\n"
         if code:
             self._all_subfragment_setup_trivial = False
-            self._device_setup_subfragments_impl = kernel_from_string(["self"],
-                                                                      code[:-1],
-                                                                      portable)
         else:
             self._all_subfragment_setup_trivial = True
-            # TODO: Make this work across multiple types to save on empty …_impl().
-            # self.device_setup_subfragments = self._noop
-            self._device_setup_subfragments_impl = kernel_from_string(["self"], "pass",
-                                                                      portable)
+            code = "pass"
+
+        if not subfrags_const:
+            subfrags_const = "break"
+        subfrags_const = textwrap.indent(subfrags_const, "            ")
+        
+        self._device_setup_string = textwrap.indent(code, "        ")
 
         code = ""
         for s in self._subfragments[::-1]:
@@ -129,14 +126,28 @@ class Fragment(HasEnvironment):
             code += f"    log_failed_cleanup('{s._stringize_path()}')\n"
         if code:
             self._all_subfragment_cleanup_trivial = False
-            self._device_cleanup_subfragments_impl = kernel_from_string(
-                ["self", "log_failed_cleanup"], code[:-1], portable)
         else:
             self._all_subfragment_cleanup_trivial = True
-            # TODO: Make this work across multiple types to save on empty …_impl().
-            # self.device_cleanup_subfragments = self._noop
-            self._device_cleanup_subfragments_impl = kernel_from_string(
-                ["self", "log_failed_cleanup"], "pass", portable)
+            code = "pass"
+
+        self._device_cleanup_string = textwrap.indent(code, "        ")
+        
+        file_dir = os.path.dirname(__file__)
+        with open(os.path.join(file_dir, "kernel_fragment_template.py"), "r") as f:
+            template = f.read()
+        
+        templated_str = Template(template).substitute(
+            device_cleanup=self._device_cleanup_string,
+            device_setup=self._device_setup_string,
+            fragment_name=klass.__name__,
+            fragment_module=klass.__module__,
+            subfrags_types=subfrags_types,
+            subfrags_imports=subfrags_imports,
+            subfrags_const=subfrags_const
+        )
+        self.name = "_".join(fragment_path)
+        with open(os.path.join(file_dir, f"generated/{klass.__name__ + self.name}.py"), "w+") as f:
+            f.write(templated_str)
 
     def _has_trivial_device_setup(self):
         assert not self._building
@@ -796,133 +807,134 @@ def _skip_common_prefix(target: list, reference: list) -> list:
     return target[i:]
 
 
-class AggregateExpFragment(ExpFragment):
-    r"""Combines multiple :class:`ExpFragment`\ s and callables by executing them one
-    after each other each time :meth:`run_once` is called.
+# class AggregateExpFragment(ExpFragment):
+#     r"""Combines multiple :class:`ExpFragment`\ s and callables by executing them one
+#     after each other each time :meth:`run_once` is called.
 
-    To use, derive from the class and, in the subclass ``build_fragment()`` method
-    forward to the parent implementation after constructing all the relevant fragments::
+#     To use, derive from the class and, in the subclass ``build_fragment()`` method
+#     forward to the parent implementation after constructing all the relevant fragments::
 
-        class FooBarAggregate(AggregateExpFragment):
-            def build_fragment(self):
-                self.setattr_fragment("foo", FooFragment)
-                self.setattr_fragment("bar", BarFragment)
+#         class FooBarAggregate(AggregateExpFragment):
+#             def build_fragment(self):
+#                 self.setattr_fragment("foo", FooFragment)
+#                 self.setattr_fragment("bar", BarFragment)
 
-                # Any number of customisations can be made as usual,
-                # e.g. to provide a convenient parameter to scan the
-                # fragments in lockstep:
-                self.setattr_param_rebind("freq", self.foo)
-                self.bar.bind_param("freq", self.freq)
+#                 # Any number of customisations can be made as usual,
+#                 # e.g. to provide a convenient parameter to scan the
+#                 # fragments in lockstep:
+#                 self.setattr_param_rebind("freq", self.foo)
+#                 self.bar.bind_param("freq", self.freq)
 
-                _, bar_store = self.bar.override_param("param")
+#                 _, bar_store = self.bar.override_param("param")
 
-                @kernel
-                def forward() -> None:
-                    # Set the value of one of bar's parameters based on
-                    # one of foo's results
-                    bar_store.set_value(self.foo.result.get_last())
+#                 @kernel
+#                 def forward() -> None:
+#                     # Set the value of one of bar's parameters based on
+#                     # one of foo's results
+#                     bar_store.set_value(self.foo.result.get_last())
 
-                # Let AggregateExpFragment's default implementations
-                # take care of the rest, e.g. have self.run_once()
-                # call self.foo.run_once(), then forward() and, finally,
-                # self.bar.run_once()
-                super().build_fragment([self.foo, forward, self.bar])
+#                 # Let AggregateExpFragment's default implementations
+#                 # take care of the rest, e.g. have self.run_once()
+#                 # call self.foo.run_once(), then forward() and, finally,
+#                 # self.bar.run_once()
+#                 super().build_fragment([self.foo, forward, self.bar])
 
-        ScanFooBarAggregate = make_fragment_scan_exp(FooBarAggregate)
-
-
-    Each aggregated experiment should be independent, i.e. do its own setup and clean
-    up.
-    """
-    def build_fragment(self, operands: list[Callable[[], None] | ExpFragment]) -> None:
-        """
-        :param operands: The list of objects to be aggregated. Each item may either be
-            a "child" fragment or a callable. The operands will be run in the given
-            order, calling ``run_once`` on child fragments. No special treatment is
-            given to the ``{host,device}_{setup,cleanup}()`` methods, which will be
-            executed through the recursive default implementations unless overridden by
-            the user.
-        """
-        if not operands:
-            raise ValueError("At least one operand must be given")
-
-        operand_funcs = [
-            operand.run_once if isinstance(operand, ExpFragment) else operand
-            for operand in operands
-        ]
-        self._exp_fragments = [
-            operand for operand in operands if isinstance(operand, ExpFragment)
-        ]
-
-        # Since polymorphism is not supported by the ARTIQ compiler, make named
-        # attributes for each operand and make a _run_once_impl() helper function
-        # that calls them one after each other.
-        for i, func in enumerate(operand_funcs):
-            setattr(self, f"_operand_func_{i}", func)
-
-        self._run_once_impl = kernel_from_string(["self"], "\n".join(
-            [f"self._operand_func_{i}()" for i in range(len(operand_funcs))]), portable)
-
-        # If all operand functions are @kernel, then make our run_once()
-        # run on the kernel too. Reassigning the member function is a bit janky, but so
-        # would it be to update the decorator, as `artiq_embedded` is an immutable tuple
-        # and the type is not public.
-        is_kernels = [is_kernel(func) for func in operand_funcs]
-        if all(is_kernels):
-            self.run_once = self._kernel_run_once
-        else:
-            if any(is_kernels):
-                logger.warning("Mixed host/@kernel functions among passed callables; " +
-                               "execution will be slow as the kernel(s) will be "
-                               "recompiled for each scan point.")
-
-    def prepare(self) -> None:
-        ""
-        for exp in self._exp_fragments:
-            exp.prepare()
-
-    def run_once(self) -> None:
-        """Execute the experiment by calling all operands.
-
-        Invokes all operands in the order they are passed to :meth:`build_fragment`.
-        This method can be overridden if more complex behaviour is desired.
-
-        If all operands have a ``@kernel`` ``run_once()``, this is implemented on
-        the core device as well to avoid costly kernel recompilations in a scan.
-        """
-        return self._run_once_impl(self)
-
-    @kernel
-    def _kernel_run_once(self) -> None:
-        return self._run_once_impl(self)
-
-    def get_always_shown_params(self) -> list[ParamHandle]:
-        """Collect always-shown params from each child fragment, plus any parameters
-        directly defined in this fragment as usual.
-        """
-        result = super().get_always_shown_params()
-        for exp in self._exp_fragments:
-            result += exp.get_always_shown_params()
-        return result
-
-    def get_default_analyses(self) -> Iterable[DefaultAnalysis]:
-        """Collect default analyses from each child fragment.
-
-        The analyses are wrapped in a proxy that prepends any result channel names with
-        the fragment path to ensure results from different analyses do not collide.
-        """
-        analyses = []
-        for exp in self._exp_fragments:
-            exp_analyses = exp.get_default_analyses()
-            prefix = "_".join(
-                _skip_common_prefix(exp._fragment_path, self._fragment_path)) + "_"
-            analyses += [
-                ResultPrefixAnalysisWrapper(analysis, prefix)
-                for analysis in exp_analyses
-            ]
-        return analyses
+#         ScanFooBarAggregate = make_fragment_scan_exp(FooBarAggregate)
 
 
+#     Each aggregated experiment should be independent, i.e. do its own setup and clean
+#     up.
+#     """
+#     def build_fragment(self, operands: list[Callable[[], None] | ExpFragment]) -> None:
+#         """
+#         :param operands: The list of objects to be aggregated. Each item may either be
+#             a "child" fragment or a callable. The operands will be run in the given
+#             order, calling ``run_once`` on child fragments. No special treatment is
+#             given to the ``{host,device}_{setup,cleanup}()`` methods, which will be
+#             executed through the recursive default implementations unless overridden by
+#             the user.
+#         """
+#         if not operands:
+#             raise ValueError("At least one operand must be given")
+
+#         operand_funcs = [
+#             operand.run_once if isinstance(operand, ExpFragment) else operand
+#             for operand in operands
+#         ]
+#         self._exp_fragments = [
+#             operand for operand in operands if isinstance(operand, ExpFragment)
+#         ]
+
+#         # Since polymorphism is not supported by the ARTIQ compiler, make named
+#         # attributes for each operand and make a _run_once_impl() helper function
+#         # that calls them one after each other.
+#         for i, func in enumerate(operand_funcs):
+#             setattr(self, f"_operand_func_{i}", func)
+
+#         self._run_once_impl = kernel_from_string(["self"], "\n".join(
+#             [f"self._operand_func_{i}()" for i in range(len(operand_funcs))]), portable)
+
+#         # If all operand functions are @kernel, then make our run_once()
+#         # run on the kernel too. Reassigning the member function is a bit janky, but so
+#         # would it be to update the decorator, as `artiq_embedded` is an immutable tuple
+#         # and the type is not public.
+#         is_kernels = [is_kernel(func) for func in operand_funcs]
+#         if all(is_kernels):
+#             self.run_once = self._kernel_run_once
+#         else:
+#             if any(is_kernels):
+#                 logger.warning("Mixed host/@kernel functions among passed callables; " +
+#                                "execution will be slow as the kernel(s) will be "
+#                                "recompiled for each scan point.")
+
+#     def prepare(self) -> None:
+#         ""
+#         for exp in self._exp_fragments:
+#             exp.prepare()
+
+#     def run_once(self) -> None:
+#         """Execute the experiment by calling all operands.
+
+#         Invokes all operands in the order they are passed to :meth:`build_fragment`.
+#         This method can be overridden if more complex behaviour is desired.
+
+#         If all operands have a ``@kernel`` ``run_once()``, this is implemented on
+#         the core device as well to avoid costly kernel recompilations in a scan.
+#         """
+#         return self._run_once_impl(self)
+
+#     @kernel
+#     def _kernel_run_once(self) -> None:
+#         return self._run_once_impl(self)
+
+#     def get_always_shown_params(self) -> list[ParamHandle]:
+#         """Collect always-shown params from each child fragment, plus any parameters
+#         directly defined in this fragment as usual.
+#         """
+#         result = super().get_always_shown_params()
+#         for exp in self._exp_fragments:
+#             result += exp.get_always_shown_params()
+#         return result
+
+#     def get_default_analyses(self) -> Iterable[DefaultAnalysis]:
+#         """Collect default analyses from each child fragment.
+
+#         The analyses are wrapped in a proxy that prepends any result channel names with
+#         the fragment path to ensure results from different analyses do not collide.
+#         """
+#         analyses = []
+#         for exp in self._exp_fragments:
+#             exp_analyses = exp.get_default_analyses()
+#             prefix = "_".join(
+#                 _skip_common_prefix(exp._fragment_path, self._fragment_path)) + "_"
+#             analyses += [
+#                 ResultPrefixAnalysisWrapper(analysis, prefix)
+#                 for analysis in exp_analyses
+#             ]
+#         return analyses
+
+
+@compile
 class TransitoryError(Exception):
     r"""Transitory error encountered while executing a fragment, which is expected to
     clear itself up if it is attempted again without any further changes.
@@ -938,6 +950,7 @@ class TransitoryError(Exception):
     """
 
 
+@compile
 class RestartKernelTransitoryError(TransitoryError):
     """:class:`.TransitoryError` where, as part of recovering from it, the kernel should
     be restarted before retrying.

@@ -11,7 +11,7 @@ with the appropriate type argument (:class:`FloatParam`, :class:`IntParam`,
 # but to hang our heads in shame and manually instantiate the parameter handling
 # machinery for all supported value types, in particular to handle cases where e.g.
 # both an int and a float parameter is scanned at the same time.
-from artiq.language import host_only, portable, units
+from artiq.language import portable, units
 from enum import Enum
 from numpy import int32
 from typing import Any, TYPE_CHECKING
@@ -48,13 +48,11 @@ class ParamStore:
 
         self._value = self.coerce(value)
 
-    @host_only
     def _register_handle(self, handle):
         # Private to this module (part of the handle change_after_used tracking).
         self._handles.append(handle)
         self._notify = self._notify_handles
 
-    @host_only
     def _unregister_handle(self, handle):
         # Private to this module (part of the handle change_after_used tracking).
         self._handles.remove(handle)
@@ -78,7 +76,6 @@ class ParamStore:
     def coerce(self, value: Any) -> Any:
         raise NotImplementedError
 
-    @host_only
     def to_rpc_type(self, value) -> RpcType:
         """For types that need to be represented differently in the RPC layer (enums),
         convert the value from overrides/scan generators/etc. to the type used across
@@ -639,7 +636,6 @@ def _get_enum_compiler_types(
                 # classes as far as the ARTIQ compiler is concerned.
                 return value
 
-            @host_only
             def to_rpc_type(self, value: enum_type) -> RpcType:
                 return self.instances.index(value)
 
@@ -668,6 +664,7 @@ def _get_enum_compiler_types(
 class EnumParam(ParamBase):
     """
     """
+    CompilerType = int32
 
     # EnumParam can't support HandleType/StoreType as class attributes, as we need
     # one class per actual enum type
