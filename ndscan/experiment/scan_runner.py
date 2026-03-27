@@ -276,11 +276,11 @@ class KernelScanRunner(ScanRunner):
         param_values_return_value += "]"
 
         # first all param setter functions
-        param_setters = ""
+        param_store_types = ""
         for i, axis in enumerate(axes):
-            param_setters += "@rpc\n"
-            param_setters += f"def _param_setter_{i}(self, value: {axis.param_store.RpcType.__name__}):\n"
-            param_setters += f"    self._axes[{i}].set_from_rpc(value)\n\n"
+            param_store_types += f"_param_store_{i}: Kernel[{axis.param_store.__class__.__name__}]\n"
+
+        param_store_types = textwrap.indent(param_store_types, "    ")
     
         # then the run_chunk function
         param_decl = " ".join(f"p{idx}," for idx in range(len(axes)))
@@ -291,15 +291,15 @@ class KernelScanRunner(ScanRunner):
         run_chunk += "        return 2\n"
         run_chunk += "    for i in range(len(p0)):\n"
         for idx in range(len(axes)):
-            run_chunk += "        self._param_setter_{0}(p{0}[i])\n".format(idx)
+            run_chunk += "        self._param_store_{0}.set_from_rpc(p{0}[i])\n".format(idx)
         run_chunk += "        if self._run_point():\n"
         run_chunk += "            return 1\n"
         run_chunk += "    return 0"
         
         self._internal_runner_string = self._internal_runner_template.substitute(
-            param_setters=textwrap.indent(param_setters, "    "),
             run_chunk=textwrap.indent(run_chunk, "    "),
             param_values_return_value=param_values_return_value,
+            param_store_types=param_store_types,
             fragment_class=fragment_class,
             fragment_module=fragment_module
         )

@@ -11,7 +11,8 @@ with the appropriate type argument (:class:`FloatParam`, :class:`IntParam`,
 # but to hang our heads in shame and manually instantiate the parameter handling
 # machinery for all supported value types, in particular to handle cases where e.g.
 # both an int and a float parameter is scanned at the same time.
-from artiq.language import portable, units
+from __future__ import annotations
+from artiq.language import portable, units, compile
 from enum import Enum
 from numpy import int32
 from typing import Any, TYPE_CHECKING
@@ -32,50 +33,6 @@ class InvalidDefaultError(ValueError):
 
 
 class ParamStore:
-    """
-    :param identity: ``(fqn, path_spec)`` pair representing the identity of this param
-        store, i.e. the override/default value it was created for.
-    :param value: The initial value.
-    """
-    def __init__(self, identity: tuple[str, str], value):
-        self.identity = identity
-
-        # KLUDGE: To work around ARTIQ compiler type inference failing for empty lists,
-        # we rebind the function to notify parameter handles of changes if there are
-        # none registered.
-        self._handles = []
-        self._notify = self._do_nothing
-
-        self._value = self.coerce(value)
-
-    def _register_handle(self, handle):
-        # Private to this module (part of the handle change_after_used tracking).
-        self._handles.append(handle)
-        self._notify = self._notify_handles
-
-    def _unregister_handle(self, handle):
-        # Private to this module (part of the handle change_after_used tracking).
-        self._handles.remove(handle)
-
-        if not self._handles:
-            self._notify = self._do_nothing
-
-    #: The type to use for this parameter in the RPC layer (to be overridden by
-    #: subclasses).
-    RpcType = Any
-
-    @portable
-    def get_value(self) -> Any:
-        raise NotImplementedError
-
-    @portable
-    def set_value(self, value: Any) -> None:
-        raise NotImplementedError
-
-    @portable
-    def coerce(self, value: Any) -> Any:
-        raise NotImplementedError
-
     def to_rpc_type(self, value) -> RpcType:
         """For types that need to be represented differently in the RPC layer (enums),
         convert the value from overrides/scan generators/etc. to the type used across
@@ -83,137 +40,142 @@ class ParamStore:
         """
         return value
 
-    @portable
-    def set_from_rpc(self, value) -> None:
-        """For types that need to be represented differently in the RPC layer (enums),
-        convert the value back to the type used in the kernel.
-        """
-        self.set_value(value)
-
     @classmethod
     def value_from_pyon(cls, value):
-        """
-        """
         return value
 
-
+@compile
 class FloatParamStore(ParamStore):
+    _value: Kernel[float]
+    _handles: Kernel[list[FloatParamHandle]]
+
     RpcType = float
 
-    @portable
-    def _notify_handles(self):
-        for h in self._handles:
-            h._changed_after_use = True
+    def __init__(self, identity, value):
+        self.identity = identity
+
+        self._handles = []
+        self._value = float(value)
 
     @portable
-    def _do_nothing(self):
-        pass
+    def _notify(self):
+        for h in self._handles:
+            h._changed_after_use = True
 
     @portable
     def get_value(self) -> float:
         return self._value
 
     @portable
-    def set_value(self, value):
-        new_value = self.coerce(value)
-        if new_value == self._value:
+    def set_value(self, value: float):
+        if value == self._value:
             return
-        self._value = new_value
+        self._value = value
         self._notify()
 
     @portable
-    def coerce(self, value):
-        return float(value)
-
-    @portable
-    def set_from_rpc(self, value) -> None:
+    def set_from_rpc(self, value: float):
         self.set_value(value)
 
 
+
+@compile
 class IntParamStore(ParamStore):
+    _value: Kernel[int32]
+    _handles: Kernel[list[IntParamHandle]]
+
     RpcType = int32
 
-    @portable
-    def _notify_handles(self):
-        for h in self._handles:
-            h._changed_after_use = True
+    def __init__(self, identity, value):
+        self.identity = identity
+
+        # KLUDGE: To work around ARTIQ compiler type inference failing for empty lists,
+        # we rebind the function to notify parameter handles of changes if there are
+        # none registered.
+        self._handles = []
+
+        self._value = int32(value)
 
     @portable
-    def _do_nothing(self):
-        pass
+    def _notify(self):
+        for h in self._handles:
+            h._changed_after_use = True
 
     @portable
     def get_value(self) -> int32:
         return self._value
 
     @portable
-    def set_value(self, value):
-        new_value = self.coerce(value)
-        if new_value == self._value:
+    def set_value(self, value: int32):
+        if value == self._value:
             return
-        self._value = new_value
+        self._value = value
         self._notify()
 
     @portable
-    def coerce(self, value):
-        return int32(value)
-
-    @portable
-    def set_from_rpc(self, value) -> None:
+    def set_from_rpc(self, value: int32):
         self.set_value(value)
 
-
+@compile
 class StringParamStore(ParamStore):
+    value: Kernel[str]
+    handles: Kernel[list[StringParamHandle]]
+
     RpcType = str
 
-    @portable
-    def _notify_handles(self):
-        for h in self._handles:
-            h._changed_after_use = True
+    def __init__(self, identity, value):
+        self.identity = identity
+
+        # KLUDGE: To work around ARTIQ compiler type inference failing for empty lists,
+        # we rebind the function to notify parameter handles of changes if there are
+        # none registered.
+        self.handles = []
+        self.value = value
 
     @portable
-    def _do_nothing(self):
-        pass
+    def _notify(self):
+        for h in self.handles:
+            h.changed_after_use = True
 
     @portable
     def get_value(self) -> str:
-        return self._value
+        return self.value
 
     @portable
-    def set_value(self, value):
+    def set_value(self, value: str):
         new_value = self.coerce(value)
-        if new_value == self._value:
+        if new_value == self.value:
             return
-        self._value = new_value
+        self.value = new_value
         self._notify()
 
     @portable
-    def coerce(self, value):
-        return value
-
-    @portable
-    def set_from_rpc(self, value) -> None:
+    def set_from_rpc(self, value: str):
         self.set_value(value)
 
-
+@compile
 class BoolParamStore(ParamStore):
+    _value: Kernel[bool]
+    _handles: Kernel[list[BoolParamStore]]
+
     RpcType = bool
 
-    @portable
-    def _notify_handles(self):
-        for h in self._handles:
-            h._changed_after_use = True
+    def __init__(self, identity, value):
+        self.identity = identity
+        self._handles = []
+        self._value = self.coerce(value)
 
     @portable
-    def _do_nothing(self):
-        pass
+    def _notify(self):
+        for h in self._handles:
+            h._changed_after_use = True
 
     @portable
     def get_value(self) -> bool:
         return self._value
 
     @portable
-    def set_value(self, value):
+    def set_value(self, value: bool):
         new_value = self.coerce(value)
         if new_value == self._value:
             return
@@ -221,13 +183,12 @@ class BoolParamStore(ParamStore):
         self._notify()
 
     @portable
-    def coerce(self, value):
+    def coerce(self, value: bool) -> bool:
         return bool(value)
 
     @portable
-    def set_from_rpc(self, value) -> None:
+    def set_from_rpc(self, value: bool):
         self.set_value(value)
-
 
 class ParamHandle:
     """
@@ -239,7 +200,7 @@ class ParamHandle:
     :param parameter: The parameter initially associated with this handle (see
         :attr:`parameter`).
     """
-    def __init__(self, owner: "Fragment", name: str, parameter):
+    def __init__(self, owner, name, parameter):
         #: The :class:`Fragment` owning this parameter handle.
         self.owner = owner
 
@@ -257,7 +218,7 @@ class ParamHandle:
         self._store = None
         self._changed_after_use = True
 
-    def set_store(self, store: ParamStore) -> None:
+    def set_store(self, store: ParamStore):
         """
         """
         if self._store:
@@ -266,14 +227,34 @@ class ParamHandle:
         self._store = store
         self._changed_after_use = True
 
-    @portable
-    def changed_after_use(self) -> bool:
-        """
-        """
-        return self._changed_after_use
+    # @portable
+    # def changed_after_use(self) -> bool:
+    #     """
+    #     """
+    #     return self._changed_after_use
 
 
+@compile
 class FloatParamHandle(ParamHandle):
+    _store: Kernel[FloatParamStore]
+    _changed_after_use: Kernel[bool]
+
+    def __init__(self, owner, name, parameter):
+        self.owner = owner
+        self.name = name
+        self.parameter = parameter
+        assert name.isidentifier(), ("ParamHandle name should be the identifier it is "
+                                     "referred to as in the owning fragment.")
+        self._store = None
+        self._changed_after_use = True
+
+    def set_store(self, store):
+        if self._store:
+            self._store._handles.remove(self)
+        store._handles.append(self)
+        self._store = store
+        self._changed_after_use = True
+
     @portable
     def get(self) -> float:
         return self._store.get_value()
@@ -283,8 +264,35 @@ class FloatParamHandle(ParamHandle):
         self._changed_after_use = False
         return self._store.get_value()
 
+    def set_store(self, store):
+        if self._store:
+            self._store._handles.remove(self)
+        store._handles.append(self)
+        self._store = store
+        self._changed_after_use = True
 
+
+@compile
 class IntParamHandle(ParamHandle):
+    _store: Kernel[IntParamStore]
+    _changed_after_use: Kernel[bool]
+
+    def __init__(self, owner, name, parameter):
+        self.owner = owner
+        self.name = name
+        self.parameter = parameter
+        assert name.isidentifier(), ("ParamHandle name should be the identifier it is "
+                                     "referred to as in the owning fragment.")
+        self._store = None
+        self._changed_after_use = True
+
+    def set_store(self, store):
+        if self._store:
+            self._store._handles.remove(self)
+        store._handles.append(self)
+        self._store = store
+        self._changed_after_use = True
+
     @portable
     def get(self) -> int32:
         return self._store.get_value()
@@ -295,7 +303,27 @@ class IntParamHandle(ParamHandle):
         return self._store.get_value()
 
 
+@compile
 class StringParamHandle(ParamHandle):
+    _store: Kernel[StringParamStore]
+    _changed_after_use: Kernel[bool]
+
+    def __init__(self, owner, name, parameter):
+        self.owner = owner
+        self.name = name
+        self.parameter = parameter
+        assert name.isidentifier(), ("ParamHandle name should be the identifier it is "
+                                     "referred to as in the owning fragment.")
+        self._store = None
+        self._changed_after_use = True
+
+    def set_store(self, store):
+        if self._store:
+            self._store._handles.remove(self)
+        store._handles.append(self)
+        self._store = store
+        self._changed_after_use = True
+
     @portable
     def get(self) -> str:
         return self._store.get_value()
@@ -306,7 +334,27 @@ class StringParamHandle(ParamHandle):
         return self._store.get_value()
 
 
+@compile
 class BoolParamHandle(ParamHandle):
+    _store: Kernel[BoolParamStore]
+    _changed_after_use: Kernel[bool]
+
+    def __init__(self, owner, name, parameter):
+        self.owner = owner
+        self.name = name
+        self.parameter = parameter
+        assert name.isidentifier(), ("ParamHandle name should be the identifier it is "
+                                     "referred to as in the owning fragment.")
+        self._store = None
+        self._changed_after_use = True
+
+    def set_store(self, store):
+        if self._store:
+            self._store._handles.remove(self)
+        store._handles.append(self)
+        self._store = store
+        self._changed_after_use = True
+
     @portable
     def get(self) -> bool:
         return self._store.get_value()
@@ -614,10 +662,6 @@ def _get_enum_compiler_types(
             def _notify_handles(self):
                 for h in self._handles:
                     h._changed_after_use = True
-
-            @portable
-            def _do_nothing(self):
-                pass
 
             @portable
             def get_value(self):

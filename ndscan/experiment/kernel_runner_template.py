@@ -3,6 +3,7 @@ from artiq.coredevice.core import Core
 import numpy as np
 from numpy import int32, int64
 from ndscan.experiment.scan_runner import ResultBatcher
+from ndscan.experiment.parameters import FloatParamStore, IntParamStore, BoolParamStore, StringParamStore
 from itertools import islice
 from .$fragment_class import Wrapper$fragment_class
 
@@ -20,6 +21,7 @@ class InternalKernelScanRunner:
     max_transitory_error_retries: KernelInvariant[int32]
     skip_on_persistent_transitory_error: KernelInvariant[bool]
     core: KernelInvariant[Core]
+$param_store_types
 
     def __init__(self, fragment, axes, axis_sinks, core,
                  scheduler,
@@ -38,9 +40,10 @@ class InternalKernelScanRunner:
         self.max_transitory_error_retries = int32(max_transitory_error_retries)
         self.skip_on_persistent_transitory_error = bool(skip_on_persistent_transitory_error)
 
-        self._result_batcher = None
+        for i, axis in enumerate(axes):
+            setattr(self, f"_param_store_{i}", axis.param_store)
 
-$param_setters
+        self._result_batcher = None
 
     def set_points(self, points):
         self._points = points
@@ -150,8 +153,7 @@ $run_chunk
                 # scans is implemented.
                 values[i].append(
                     axis.param_store.to_rpc_type(
-                        axis.param_store.coerce(
-                            axis.param_store.value_from_pyon(value))))
+                            axis.param_store.value_from_pyon(value)))
         return values
 
     @rpc(flags={"async"})
