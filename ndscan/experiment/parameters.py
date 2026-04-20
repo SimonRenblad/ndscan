@@ -12,7 +12,8 @@ with the appropriate type argument (:class:`FloatParam`, :class:`IntParam`,
 # machinery for all supported value types, in particular to handle cases where e.g.
 # both an int and a float parameter is scanned at the same time.
 from __future__ import annotations
-from artiq.language import portable, units, compile
+from artiq.language import portable, units, compile, kernel
+from artiq.language.core import Kernel
 from enum import Enum
 from numpy import int32
 from typing import Any, TYPE_CHECKING
@@ -20,7 +21,8 @@ from ..utils import eval_param_default, GetDataset
 
 __all__ = [
     "InvalidDefaultError", "ParamStore", "ParamHandle", "FloatParam", "IntParam",
-    "StringParam", "BoolParam", "EnumParam"
+    "StringParam", "BoolParam", "EnumParam", "IntParamHandle", "IntParamStore",
+    "FloatParamHandle", "FloatParamStore", "BoolParamHandle", "BoolParamStore"
 ]
 
 if TYPE_CHECKING:
@@ -118,8 +120,8 @@ class IntParamStore(ParamStore):
 
 @compile
 class StringParamStore(ParamStore):
-    value: Kernel[str]
-    handles: Kernel[list[StringParamHandle]]
+    _value: Kernel[str]
+    _handles: Kernel[list[StringParamHandle]]
 
     RpcType = str
 
@@ -129,24 +131,24 @@ class StringParamStore(ParamStore):
         # KLUDGE: To work around ARTIQ compiler type inference failing for empty lists,
         # we rebind the function to notify parameter handles of changes if there are
         # none registered.
-        self.handles = []
-        self.value = value
+        self._handles: list[StringParamHandle] = []
+        self._value = value
 
     @portable
     def _notify(self):
-        for h in self.handles:
-            h.changed_after_use = True
+        for h in self._handles:
+            h._changed_after_use = True
 
     @portable
     def get_value(self) -> str:
-        return self.value
+        return self._value
 
     @portable
     def set_value(self, value: str):
-        new_value = self.coerce(value)
-        if new_value == self.value:
+        new_value = value
+        if new_value == self._value:
             return
-        self.value = new_value
+        self._value = new_value
         self._notify()
 
     @portable
@@ -156,14 +158,14 @@ class StringParamStore(ParamStore):
 @compile
 class BoolParamStore(ParamStore):
     _value: Kernel[bool]
-    _handles: Kernel[list[BoolParamStore]]
+    _handles: Kernel[list[BoolParamHandle]]
 
     RpcType = bool
 
     def __init__(self, identity, value):
         self.identity = identity
         self._handles = []
-        self._value = self.coerce(value)
+        self._value = value
 
     @portable
     def _notify(self):
@@ -176,15 +178,11 @@ class BoolParamStore(ParamStore):
 
     @portable
     def set_value(self, value: bool):
-        new_value = self.coerce(value)
+        new_value = value
         if new_value == self._value:
             return
         self._value = new_value
         self._notify()
-
-    @portable
-    def coerce(self, value: bool) -> bool:
-        return bool(value)
 
     @portable
     def set_from_rpc(self, value: bool):
@@ -673,12 +671,6 @@ def _get_enum_compiler_types(
                     return
                 self._value = value
                 self._notify()
-
-            @portable
-            def coerce(self, value):
-                # Can't ensure type matches on compiler, since enums are arbitrary
-                # classes as far as the ARTIQ compiler is concerned.
-                return value
 
             def to_rpc_type(self, value: enum_type) -> RpcType:
                 return self.instances.index(value)
