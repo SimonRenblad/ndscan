@@ -2,18 +2,19 @@
   description = "ndscan for ARTIQ";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+    artiq = {
+      url = git+https://git.m-labs.hk/M-Labs/artiq.git;
+    };
     src-oitg = {
       url = "github:OxfordIonTrapGroup/oitg";
       flake = false;
     };
-    artiq.url = git+https://github.com/m-labs/artiq.git;
   };
 
   outputs =
-    { self, nixpkgs, src-oitg, artiq }:
+    { self, src-oitg, artiq }:
     let
-      pkgs = import nixpkgs { system = "x86_64-linux"; };
+      pkgs = import artiq.inputs.nac3.inputs.nixpkgs { system = "x86_64-linux"; };
       oitg = pkgs.python3Packages.buildPythonPackage rec {
         pname = "oitg";
         version = "0.2";
