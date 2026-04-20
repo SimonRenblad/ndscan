@@ -3,7 +3,7 @@ from artiq.coredevice.core import Core
 import numpy as np
 from numpy import int32, int64
 from ndscan.experiment.scan_runner import ResultBatcher
-from ndscan.experiment.parameters import FloatParamStore, IntParamStore, BoolParamStore, StringParamStore
+from ndscan.experiment.parameters import FloatParamStore, IntParamStore, BoolParamStore
 from itertools import islice
 from .$fragment_class import Wrapper$fragment_class
 
