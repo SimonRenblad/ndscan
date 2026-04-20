@@ -186,6 +186,10 @@ class FloatParamHandle(ParamHandle):
         self._changed_after_use = False
         return self._store.get_value()
 
+    @portable
+    def changed_after_use(self):
+        return self._changed_after_use
+
 
 @compile
 class IntParamHandle(ParamHandle):
@@ -201,6 +205,10 @@ class IntParamHandle(ParamHandle):
         self._changed_after_use = False
         return self._store.get_value()
 
+    @portable
+    def changed_after_use(self):
+        return self._changed_after_use
+
 
 @compile
 class BoolParamHandle(ParamHandle):
@@ -215,6 +223,10 @@ class BoolParamHandle(ParamHandle):
     def use(self) -> bool:
         self._changed_after_use = False
         return self._store.get_value()
+
+    @portable
+    def changed_after_use(self):
+        return self._changed_after_use
 
 
 def resolve_numeric_scale(scale: float | None, unit: str) -> float:
