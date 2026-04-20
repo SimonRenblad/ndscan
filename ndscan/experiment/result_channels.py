@@ -226,13 +226,6 @@ class ResultChannel:
         """
         self.sink = sink
 
-    @rpc(flags={"async"})
-    def push(self, raw_value) -> None:
-        """
-        """
-        value = self._coerce_to_type(raw_value)
-        if self.sink:
-            self.sink.push(value)
 
     def _get_type_string(self):
         raise NotImplementedError()
@@ -280,32 +273,6 @@ class NumericChannel(ResultChannel):
         self._value_pushed: bool = False
         self._last_value = self._coerce_to_type(0)
 
-    @kernel
-    def get_last(self):
-        """ Returns the last value pushed to this result channel.
-
-        This method is a workaround for limitations of ARTIQ python, which make it
-        impractical to extract values from the sinks without going through RPCs.
-        """
-        if not self._value_pushed:
-            raise RuntimeError("No value pushed to channel")
-
-        return self._last_value
-
-    @portable
-    def push(self, raw_value) -> None:
-        """
-        """
-        self._value_pushed = True
-        self._last_value = raw_value
-        self._push(raw_value)
-
-    @rpc(flags={"async"})
-    def _push(self, raw_value) -> None:
-        """
-        """
-        super().push(raw_value)
-
     def describe(self) -> dict[str, Any]:
         """"""
         result = super().describe()
@@ -319,6 +286,7 @@ class NumericChannel(ResultChannel):
         return result
 
 
+@compile
 class FloatChannel(NumericChannel):
     """:class:`NumericChannel` that accepts floating-point results."""
     def _get_type_string(self):
@@ -327,7 +295,34 @@ class FloatChannel(NumericChannel):
     def _coerce_to_type(self, value):
         return float(value)
 
+    @kernel
+    def get_last(self):
+        """ Returns the last value pushed to this result channel.
 
+        This method is a workaround for limitations of ARTIQ python, which make it
+        impractical to extract values from the sinks without going through RPCs.
+        """
+        if not self._value_pushed:
+            raise RuntimeError("No value pushed to channel")
+
+        return self._last_value
+
+    @portable
+    def push(self, raw_value):
+        """
+        """
+        self._value_pushed = True
+        self._last_value = raw_value
+        self._push(raw_value)
+
+    @rpc(flags={"async"})
+    def _push(self, raw_value):
+        value = self._coerce_to_type(raw_value)
+        if self.sink:
+            self.sink.push(value)
+
+
+@compile
 class IntChannel(NumericChannel):
     """:class:`NumericChannel` that accepts integer results."""
     def _get_type_string(self):
@@ -336,7 +331,36 @@ class IntChannel(NumericChannel):
     def _coerce_to_type(self, value):
         return int(value)
 
+    @kernel
+    def get_last(self):
+        """ Returns the last value pushed to this result channel.
 
+        This method is a workaround for limitations of ARTIQ python, which make it
+        impractical to extract values from the sinks without going through RPCs.
+        """
+        if not self._value_pushed:
+            raise RuntimeError("No value pushed to channel")
+
+        return self._last_value
+
+    @portable
+    def push(self, raw_value):
+        """
+        """
+        self._value_pushed = True
+        self._last_value = raw_value
+        self._push(raw_value)
+
+    @rpc(flags={"async"})
+    def _push(self, raw_value):
+        """
+        """
+        value = self._coerce_to_type(raw_value)
+        if self.sink:
+            self.sink.push(value)
+
+
+@compile
 class OpaqueChannel(ResultChannel):
     """:class:`ResultChannel` that stores arbitrary data, with ndscan making no attempts
     to further interpret or display it.
@@ -355,7 +379,16 @@ class OpaqueChannel(ResultChannel):
     def _coerce_to_type(self, value):
         return value
 
+    @rpc(flags={"async"})
+    def push(self, raw_value) -> None:
+        """
+        """
+        value = self._coerce_to_type(raw_value)
+        if self.sink:
+            self.sink.push(value)
 
+
+@compile
 class SubscanChannel(ResultChannel):
     """Channel that stores the scan metadata for a subscan.
 
@@ -366,3 +399,11 @@ class SubscanChannel(ResultChannel):
 
     def _coerce_to_type(self, value):
         return dump_json(value)
+
+    @rpc(flags={"async"})
+    def push(self, raw_value) -> None:
+        """
+        """
+        value = self._coerce_to_type(raw_value)
+        if self.sink:
+            self.sink.push(value)
