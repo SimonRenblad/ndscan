@@ -35,6 +35,12 @@ class InvalidDefaultError(ValueError):
 
 
 class ParamStore:
+    def __init__(self, identity, value):
+        self.identity = identity
+
+        self._handles = []
+        self._value = value
+
     def to_rpc_type(self, value) -> RpcType:
         """For types that need to be represented differently in the RPC layer (enums),
         convert the value from overrides/scan generators/etc. to the type used across
@@ -52,12 +58,6 @@ class FloatParamStore(ParamStore):
     _handles: Kernel[list[FloatParamHandle]]
 
     RpcType = float
-
-    def __init__(self, identity, value):
-        self.identity = identity
-
-        self._handles = []
-        self._value = float(value)
 
     @portable
     def _notify(self):
@@ -80,23 +80,12 @@ class FloatParamStore(ParamStore):
         self.set_value(value)
 
 
-
 @compile
 class IntParamStore(ParamStore):
     _value: Kernel[int32]
     _handles: Kernel[list[IntParamHandle]]
 
     RpcType = int32
-
-    def __init__(self, identity, value):
-        self.identity = identity
-
-        # KLUDGE: To work around ARTIQ compiler type inference failing for empty lists,
-        # we rebind the function to notify parameter handles of changes if there are
-        # none registered.
-        self._handles = []
-
-        self._value = int32(value)
 
     @portable
     def _notify(self):
@@ -125,11 +114,6 @@ class BoolParamStore(ParamStore):
     _handles: Kernel[list[BoolParamHandle]]
 
     RpcType = bool
-
-    def __init__(self, identity, value):
-        self.identity = identity
-        self._handles = []
-        self._value = value
 
     @portable
     def _notify(self):
@@ -180,42 +164,18 @@ class ParamHandle:
         self._store = None
         self._changed_after_use = True
 
-    def set_store(self, store: ParamStore):
-        """
-        """
-        if self._store:
-            self._store._unregister_handle(self)
-        store._register_handle(self)
-        self._store = store
-        self._changed_after_use = True
-
-    # @portable
-    # def changed_after_use(self) -> bool:
-    #     """
-    #     """
-    #     return self._changed_after_use
-
-
-@compile
-class FloatParamHandle(ParamHandle):
-    _store: Kernel[FloatParamStore]
-    _changed_after_use: Kernel[bool]
-
-    def __init__(self, owner, name, parameter):
-        self.owner = owner
-        self.name = name
-        self.parameter = parameter
-        assert name.isidentifier(), ("ParamHandle name should be the identifier it is "
-                                     "referred to as in the owning fragment.")
-        self._store = None
-        self._changed_after_use = True
-
     def set_store(self, store):
         if self._store:
             self._store._handles.remove(self)
         store._handles.append(self)
         self._store = store
         self._changed_after_use = True
+
+
+@compile
+class FloatParamHandle(ParamHandle):
+    _store: Kernel[FloatParamStore]
+    _changed_after_use: Kernel[bool]
 
     @portable
     def get(self) -> float:
@@ -226,34 +186,11 @@ class FloatParamHandle(ParamHandle):
         self._changed_after_use = False
         return self._store.get_value()
 
-    def set_store(self, store):
-        if self._store:
-            self._store._handles.remove(self)
-        store._handles.append(self)
-        self._store = store
-        self._changed_after_use = True
-
 
 @compile
 class IntParamHandle(ParamHandle):
     _store: Kernel[IntParamStore]
     _changed_after_use: Kernel[bool]
-
-    def __init__(self, owner, name, parameter):
-        self.owner = owner
-        self.name = name
-        self.parameter = parameter
-        assert name.isidentifier(), ("ParamHandle name should be the identifier it is "
-                                     "referred to as in the owning fragment.")
-        self._store = None
-        self._changed_after_use = True
-
-    def set_store(self, store):
-        if self._store:
-            self._store._handles.remove(self)
-        store._handles.append(self)
-        self._store = store
-        self._changed_after_use = True
 
     @portable
     def get(self) -> int32:
@@ -269,22 +206,6 @@ class IntParamHandle(ParamHandle):
 class BoolParamHandle(ParamHandle):
     _store: Kernel[BoolParamStore]
     _changed_after_use: Kernel[bool]
-
-    def __init__(self, owner, name, parameter):
-        self.owner = owner
-        self.name = name
-        self.parameter = parameter
-        assert name.isidentifier(), ("ParamHandle name should be the identifier it is "
-                                     "referred to as in the owning fragment.")
-        self._store = None
-        self._changed_after_use = True
-
-    def set_store(self, store):
-        if self._store:
-            self._store._handles.remove(self)
-        store._handles.append(self)
-        self._store = store
-        self._changed_after_use = True
 
     @portable
     def get(self) -> bool:
