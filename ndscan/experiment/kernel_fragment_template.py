@@ -44,21 +44,6 @@ $subfrags_types
         for s in self.fragment._subfragments:
 $subfrags_const
 
-        #: Maps names of non-overridden parameters of this fragment (i.e., matching the
-        #: attribute names of the respective ParamHandles) to *Param instances.
-        self._free_params = OrderedDict()
-
-        #: Maps own attribute name to the ParamHandles of the rebound parameters in
-        #: their original subfragment.
-        self._rebound_subfragment_params = dict()
-
-        #: List of (param, store) tuples of parameters set to their defaults after
-        #: init_params().
-        self._default_params = []
-
-        #: Maps full path of own result channels to ResultChannel instances.
-        self._result_channels = {}
-
     @portable
     def device_setup_subfragments(self):
 $device_setup
@@ -67,35 +52,10 @@ $device_setup
     def device_cleanup_subfragments(self):
 $device_cleanup
 
-    def _has_trivial_device_setup(self):
-        assert not self._building
-        empty_setup = self.device_setup.__func__ is Fragment.device_setup
-        return empty_setup and self._all_subfragment_setup_trivial
-
-    def _has_trivial_device_cleanup(self):
-        assert not self._building
-        empty_cleanup = self.device_cleanup.__func__ is Fragment.device_cleanup
-        return empty_cleanup and self._all_subfragment_cleanup_trivial
-
-    def host_setup(self):
-        for s in self._subfragments:
-            if s in self._detached_subfragments:
-                continue
-            s.host_setup()
-
     @portable
     def device_setup(self):
         self.fragment.device_setup()
         self.device_setup_subfragments()
-
-    def host_cleanup(self):
-        for s in self._subfragments[::-1]:
-            if s in self._detached_subfragments:
-                continue
-            try:
-                s.host_cleanup()
-            except Exception:
-                logger.exception("Cleanup failed for '%s'", s._stringize_path())
 
     @portable
     def device_cleanup(self):
