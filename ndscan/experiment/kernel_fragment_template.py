@@ -102,6 +102,6 @@ $device_cleanup
         self.fragment.device_cleanup()
         self.device_cleanup_subfragments()
 
-    @kernel
+    @portable
     def run_once(self):
         self.fragment.run_once()
