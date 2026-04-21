@@ -335,10 +335,10 @@ class KernelScanRunner(ScanRunner):
 
 
 def select_runner_class(fragment: ExpFragment) -> type[ScanRunner]:
-    # if is_kernel(fragment.run_once):
-    return KernelScanRunner
-    # else:
-        # return HostScanRunner
+    if is_kernel(fragment.run_once):
+        return KernelScanRunner
+    else:
+        return HostScanRunner
 
 
 def match_default_analysis(analysis: DefaultAnalysis, axes: Iterable[ScanAxis]) -> bool:
