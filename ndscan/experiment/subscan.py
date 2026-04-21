@@ -346,6 +346,9 @@ def setup_subscan(result_target: Fragment,
                                                    new_channel)
             parent_analysis_result_channels[name] = new_channel
 
+    # TODO(srenblad): we dont need to worry about this cludginess, however we
+    # do need create a different name for the "Inner" subscan runner such that
+    # we can have multiple generated runners. 
     # KLUDGE: If we end up running on the kernel, the ARTIQ compiler needs to treat the
     # "inner" (subscan) and "outer" (TopLevelRunner/…) ScanRunner instances differently
     # in terms of types.
