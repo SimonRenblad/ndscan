@@ -555,7 +555,9 @@ def make_fragment_scan_exp(
 
     return FragmentScanShim
 
-
+# TODO: need to create inner runner for this also to interact with wrapper
+# so fragment_runner_template and then just the params for this to work
+# call into the wrapped class to interface with the kernel
 class _FragmentRunner(HasEnvironment):
     """Object wrapping fragment execution to be able to execute everything in one kernel
     invocation (no difference for non-kernel fragments).
