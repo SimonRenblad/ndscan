@@ -21,6 +21,7 @@ import logging
 import random
 import time
 from typing import Any
+from string import Template
 
 from .default_analysis import AnnotationContext
 from .fragment import (ExpFragment, Fragment, RestartKernelTransitoryError,
@@ -570,6 +571,26 @@ class _FragmentRunner(HasEnvironment):
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
 
+        fragment_class = self.fragment.__class__.__name__
+
+        file_dir = os.path.dirname(__file__)
+        with open(os.path.join(file_dir, "kernel_once_runner_template.py"), "r") as f:
+            template = f.read()
+        
+        templated_str = Template(template).substitute(
+            fragment_class=fragment_class
+        )
+        with open(os.path.join(file_dir, f"generated/once_runner.py"), "w+") as f:
+            f.write(templated_str)
+
+        # TODO(srenblad): replace with loading from string if possible
+        from .generated import once_runner
+        self.runner = once_runner._InnerFragmentRunner(
+            fragment,
+            max_rtio_underflow_retries,
+            max_transitory_error_retries
+        )
+
     def run(self) -> bool:
         """Execute device_setup()/run_once(), retrying if nececssary.
 
@@ -578,17 +599,10 @@ class _FragmentRunner(HasEnvironment):
         """
         # TODO: Unify with FragmentScanExperiment._run_continuous().
         if is_kernel(self.fragment.run_once):
-            self.setattr_device("core")
-            return self._run_on_kernel()
+            self.runner._run()
         else:
             return self._run()
 
-    @kernel
-    def _run_on_kernel(self):
-        """Force the portable _run() to run on the kernel."""
-        return self._run()
-
-    @portable
     def _run(self):
         try:
             while True:

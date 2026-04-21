@@ -27,27 +27,7 @@ class _InnerFragmentRunner(HasEnvironment):
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
 
-
-    def run(self) -> bool:
-        """Execute device_setup()/run_once(), retrying if nececssary.
-
-        :return: ``True`` if execution completed, ``False`` if it should be attempted
-            again (RestartKernelTransitoryError).
-        """
-        # TODO: Unify with FragmentScanExperiment._run_continuous().
-        if is_kernel(self.fragment.fragment.run_once):
-            self.setattr_device("core")
-            return self._run_on_kernel()
-        else:
-            return self._run()
-
     @kernel
-    def _run_on_kernel(self):
-        """Force the portable _run() to run on the kernel."""
-        return self._run()
-
-    # TODO(srenblad): this will need to be separate for kernel and host..
-    @portable
     def _run(self):
         try:
             while True:
@@ -59,23 +39,17 @@ class _InnerFragmentRunner(HasEnvironment):
                     self.num_underflows_caught += 1
                     if self.num_underflows_caught > self.max_rtio_underflow_retries:
                         raise
-                    # print("Ignoring RTIOUnderflow (", self.num_underflows_caught, "/",
-                    #       self.max_rtio_underflow_retries, ")")
                 except RestartKernelTransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.max_transitory_error_retries):
                         raise
-                    # print("Caught transitory error, restarting kernel")
                     return False
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.max_transitory_error_retries):
                         raise
-                    # print("Caught transitory error (",
-                    #       self.num_transitory_errors_caught, "/",
-                    #       self.max_transitory_error_retries, "), retrying")
         finally:
             self.fragment.device_cleanup()
         assert False, "Execution never reaches here, return is just to pacify compiler."
