@@ -15,10 +15,9 @@ def path_matches_spec(path: Iterable[str], spec: str) -> bool:
 
 
 def is_kernel(func) -> bool:
-    if not hasattr(func, "artiq_embedded"):
+    if not hasattr(func, "__artiq_kernel__"):
         return False
-    meta = func.artiq_embedded
-    return meta.core_name is not None and not meta.portable
+    return func.__artiq_kernel__
 
 
 class NumpyToVanillaEncoder(json.JSONEncoder):
