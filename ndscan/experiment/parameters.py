@@ -39,7 +39,7 @@ class ParamStore:
         self.identity = identity
 
         self._handles = []
-        self._value = value
+        self._value = self.coerce(value)
 
     def to_rpc_type(self, value) -> RpcType:
         """For types that need to be represented differently in the RPC layer (enums),
@@ -51,6 +51,10 @@ class ParamStore:
     @classmethod
     def value_from_pyon(cls, value):
         return value
+
+    def coerce(self, value):
+        return value
+
 
 @compile
 class FloatParamStore(ParamStore):
@@ -79,6 +83,8 @@ class FloatParamStore(ParamStore):
     def set_from_rpc(self, value: float):
         self.set_value(value)
 
+    def coerce(self, value):
+        return float(value)
 
 @compile
 class IntParamStore(ParamStore):
@@ -106,6 +112,9 @@ class IntParamStore(ParamStore):
     @portable
     def set_from_rpc(self, value: int32):
         self.set_value(value)
+
+    def coerce(self, value):
+        return int32(value)
 
 
 @compile
@@ -135,6 +144,10 @@ class BoolParamStore(ParamStore):
     @portable
     def set_from_rpc(self, value: bool):
         self.set_value(value)
+
+    def coerce(self, value):
+        return bool(value)
+
 
 class ParamHandle:
     """
@@ -187,7 +200,7 @@ class FloatParamHandle(ParamHandle):
         return self._store.get_value()
 
     @portable
-    def changed_after_use(self):
+    def changed_after_use(self) -> bool:
         return self._changed_after_use
 
 
@@ -206,7 +219,7 @@ class IntParamHandle(ParamHandle):
         return self._store.get_value()
 
     @portable
-    def changed_after_use(self):
+    def changed_after_use(self) -> bool:
         return self._changed_after_use
 
 
@@ -225,7 +238,7 @@ class BoolParamHandle(ParamHandle):
         return self._store.get_value()
 
     @portable
-    def changed_after_use(self):
+    def changed_after_use(self) -> bool:
         return self._changed_after_use
 
 
