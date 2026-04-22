@@ -2,15 +2,17 @@
 Result handling building blocks.
 """
 
-from artiq.language import HasEnvironment, kernel, portable, rpc
+from numpy import int32
+from artiq.language import HasEnvironment, kernel, portable, rpc, compile
 from artiq.language import units
+from artiq.language.core import Kernel
 from typing import Any
 from .utils import dump_json
 
 __all__ = [
     "SingleUseSink", "LastValueSink", "ArraySink", "AppendingDatasetSink",
     "ScalarDatasetSink", "ResultChannel", "NumericChannel", "FloatChannel",
-    "IntChannel", "OpaqueChannel"
+    "IntChannel", "BoolChannel"
 ]
 
 
@@ -289,6 +291,10 @@ class NumericChannel(ResultChannel):
 @compile
 class FloatChannel(NumericChannel):
     """:class:`NumericChannel` that accepts floating-point results."""
+
+    _value_pushed: Kernel[bool]
+    _last_value: Kernel[float]
+
     def _get_type_string(self):
         return "float"
 
@@ -296,7 +302,7 @@ class FloatChannel(NumericChannel):
         return float(value)
 
     @kernel
-    def get_last(self):
+    def get_last(self) -> float:
         """ Returns the last value pushed to this result channel.
 
         This method is a workaround for limitations of ARTIQ python, which make it
@@ -308,7 +314,7 @@ class FloatChannel(NumericChannel):
         return self._last_value
 
     @portable
-    def push(self, raw_value):
+    def push(self, raw_value: float):
         """
         """
         self._value_pushed = True
@@ -316,7 +322,7 @@ class FloatChannel(NumericChannel):
         self._push(raw_value)
 
     @rpc(flags={"async"})
-    def _push(self, raw_value):
+    def _push(self, raw_value: float):
         value = self._coerce_to_type(raw_value)
         if self.sink:
             self.sink.push(value)
@@ -325,14 +331,18 @@ class FloatChannel(NumericChannel):
 @compile
 class IntChannel(NumericChannel):
     """:class:`NumericChannel` that accepts integer results."""
+
+    _value_pushed: Kernel[bool]
+    _last_value: Kernel[int32]
+
     def _get_type_string(self):
         return "int"
 
     def _coerce_to_type(self, value):
-        return int(value)
+        return int32(value)
 
     @kernel
-    def get_last(self):
+    def get_last(self) -> int32:
         """ Returns the last value pushed to this result channel.
 
         This method is a workaround for limitations of ARTIQ python, which make it
@@ -344,7 +354,7 @@ class IntChannel(NumericChannel):
         return self._last_value
 
     @portable
-    def push(self, raw_value):
+    def push(self, raw_value: int32):
         """
         """
         self._value_pushed = True
@@ -352,7 +362,7 @@ class IntChannel(NumericChannel):
         self._push(raw_value)
 
     @rpc(flags={"async"})
-    def _push(self, raw_value):
+    def _push(self, raw_value: int32):
         """
         """
         value = self._coerce_to_type(raw_value)
@@ -361,6 +371,23 @@ class IntChannel(NumericChannel):
 
 
 @compile
+class BoolChannel(ResultChannel):
+    def _get_type_string(self):
+        return "bool"
+
+    def _coerce_to_type(self, value):
+        return bool(value)
+
+    @rpc(flags={"async"})
+    def push(self, raw_value: bool):
+        """
+        """
+        value = self._coerce_to_type(raw_value)
+        if self.sink:
+            self.sink.push(value)
+
+
+# TODO(srenblad): raw_value is Any by design
 class OpaqueChannel(ResultChannel):
     """:class:`ResultChannel` that stores arbitrary data, with ndscan making no attempts
     to further interpret or display it.
@@ -380,7 +407,7 @@ class OpaqueChannel(ResultChannel):
         return value
 
     @rpc(flags={"async"})
-    def push(self, raw_value) -> None:
+    def push(self, raw_value):
         """
         """
         value = self._coerce_to_type(raw_value)
@@ -388,7 +415,7 @@ class OpaqueChannel(ResultChannel):
             self.sink.push(value)
 
 
-@compile
+# TODO(srenblad): raw_value is arbitrary dict[str, Any], needs workaround
 class SubscanChannel(ResultChannel):
     """Channel that stores the scan metadata for a subscan.
 
