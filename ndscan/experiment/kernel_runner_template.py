@@ -1,5 +1,5 @@
 from ndscan.experiment import kernel, rpc, compile, Kernel, KernelInvariant, portable, RTIOUnderflow, print_rpc, RestartKernelTransitoryError, TransitoryError
-from artiq.coredevice.core import Core
+from artiq.coredevice.core import Core, Kernel, KernelInvariant
 import numpy as np
 from numpy import int32, int64
 from ndscan.experiment.scan_runner import ResultBatcher
@@ -14,7 +14,7 @@ _RUN_CHUNK_SCAN_COMPLETE = 2
 
 @compile
 class InternalKernelScanRunner:
-    _fragment: Kernel[Wrapper$fragment_class]
+    _fragment: KernelInvariant[Wrapper$fragment_class]
     _pause_check_interval_mu: Kernel[int64]
     _last_pause_check_mu: Kernel[int64]
     max_rtio_underflow_retries: KernelInvariant[int32]
