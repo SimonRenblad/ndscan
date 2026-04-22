@@ -54,7 +54,7 @@ $run_chunk
 
     @rpc(flags={"async"})
     def _install_result_batcher(self):
-        self._result_batcher = ResultBatcher(self._fragment)
+        self._result_batcher = ResultBatcher(self._fragment.fragment)
         self._result_batcher.install()
 
     @rpc(flags={"async"})
