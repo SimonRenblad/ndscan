@@ -595,49 +595,13 @@ class _FragmentRunner(HasEnvironment):
                         if done:
                             break
                     else:
-                        if self._continuous_loop():
+                        if self.runner._continuous_loop():
                             break
                 finally:
                     self.fragment.host_cleanup()
                 self.tlr.scheduler.pause()
         finally:
             self.tlr._set_completed()
-
-    # TODO(srenblad): continuous looping on host
-    # def _continuous_loop(self):
-    #     try:
-    #         while not self.tlr.scheduler.check_pause():
-    #             try:
-    #                 self.fragment.device_setup()
-    #                 self.fragment.run_once()
-    #                 self._finish_continuous_point()
-    #                 if not self._continue_running:
-    #                     return True
-
-    #                 # One point is now finished, so reset transitory error counters for
-    #                 # the next one.
-    #                 self.num_current_transitory_errors = 0
-    #                 self.num_current_underflows = 0
-    #             except RTIOUnderflow:
-    #                 self.num_current_underflows += 1
-    #                 if self.num_current_underflows > self.max_rtio_underflow_retries:
-    #                     raise
-    #             except RestartKernelTransitoryError:
-    #                 self.num_current_transitory_errors += 1
-    #                 if (self.num_current_transitory_errors >
-    #                         self.max_transitory_error_retries):
-    #                     raise
-    #                 return False
-    #             except TransitoryError:
-    #                 self.num_current_transitory_errors += 1
-    #                 if (self.num_current_transitory_errors >
-    #                         self.max_transitory_error_retries):
-    #                     raise
-    #         return False
-    #     finally:
-    #         self.fragment.device_cleanup()
-    #     assert False, "Execution never reaches here, return is just to pacify compiler."
-    #     return True
 
 
 def run_fragment_once(

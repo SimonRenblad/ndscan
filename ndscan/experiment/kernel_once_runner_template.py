@@ -75,7 +75,8 @@ class _InnerFragmentRunner:
     def scheduler_check_pause(self) -> bool:
         return self.runner.scheduler.check_pause()
 
-    @kernel
+    # TODO(srenblad): add back print statements for transitory error / underflows
+    @portable
     def _continuous_loop(self) -> bool:
         try:
             while not self.scheduler_check_pause():
