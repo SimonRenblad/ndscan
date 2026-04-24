@@ -309,11 +309,10 @@ class KernelScanRunner(ScanRunner):
         # module = load_with_loader(StringLoader("<synthesized>", self._internal_runner_string))
         from .generated import runner
         self._internal_runner = runner.InternalKernelScanRunner(
+            self,
             self._fragment,
             self._axes,
             self._axis_sinks,
-            self.core,
-            self.scheduler,
             self.max_rtio_underflow_retries,
             self.max_transitory_error_retries,
             self.skip_on_persistent_transitory_error,

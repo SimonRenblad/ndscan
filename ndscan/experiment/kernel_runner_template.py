@@ -23,13 +23,11 @@ class InternalKernelScanRunner:
     core: KernelInvariant[Core]
 $param_store_types
 
-    def __init__(self, fragment, axes, axis_sinks, core,
-                 scheduler,
-                 max_rtio_underflow_retries,
+    def __init__(self, runner, fragment, axes, axis_sinks, max_rtio_underflow_retries,
                  max_transitory_error_retries,
                  skip_on_persistent_transitory_error):
-        self.core = core
-        self.scheduler = scheduler
+        self.core = runner.core
+        self.scheduler = runner.scheduler
         self._fragment = Wrapper$fragment_class(fragment)
         self._axes = axes
         self._axis_sinks = axis_sinks
