@@ -20,6 +20,7 @@ from functools import reduce
 import logging
 import random
 import time
+import os
 from typing import Any
 from string import Template
 
@@ -332,7 +333,14 @@ class TopLevelRunner(HasEnvironment):
         self._broadcast_metadata()
 
         if not self.spec.axes and not self._is_time_series:
-            self._run_continuous()
+            runner = _FragmentRunner(
+                self,
+                self.fragment,
+                self.max_rtio_underflow_retries,
+                self.max_transitory_error_retries,
+                self._continue_running
+            )
+            runner.run_continuous()
             return None, {c: s.get_last() for c, s in self._scan_result_sinks.items()}
 
         if self._is_time_series:
@@ -340,7 +348,15 @@ class TopLevelRunner(HasEnvironment):
                 self, self.dataset_prefix + "points.axis_0")
             self._coordinate_sinks = [self._timestamp_sink]
             self._time_series_start = time.monotonic()
-            self._run_continuous()
+            runner = _FragmentRunner(
+                self,
+                self.fragment,
+                self.max_rtio_underflow_retries,
+                self.max_transitory_error_retries,
+                self._continue_running,
+                self._is_time_series
+            )
+            runner.run_continuous()
         else:
             runner = select_runner_class(self.fragment)(
                 self,
@@ -390,93 +406,6 @@ class TopLevelRunner(HasEnvironment):
             name: channel.sink.get_last()
             for name, channel in self._analysis_results.items()
         }
-
-    def _run_continuous(self):
-        self._point_phase = False
-        # TODO: Unify with _FragmentRunner.
-        self.num_current_transitory_errors = 0
-        self.num_current_underflows = 0
-        try:
-            while True:
-                # After every pause(), pull in dataset changes (immediately as well to
-                # catch changes between the time the experiment is prepared and when it
-                # is run, to keep the semantics uniform).
-                self.fragment.recompute_param_defaults()
-                try:
-                    self.fragment.host_setup()
-                    if is_kernel(self.fragment.run_once):
-                        done = self._run_continuous_kernel()
-                        self.core.comm.close()
-                        if done:
-                            break
-                    else:
-                        if self._continuous_loop():
-                            break
-                finally:
-                    self.fragment.host_cleanup()
-                self.scheduler.pause()
-        finally:
-            self._set_completed()
-
-    @kernel
-    def _run_continuous_kernel(self):
-        self.core.reset()
-        return self._continuous_loop()
-
-    @portable
-    def _continuous_loop(self):
-        # TODO: Unify with _FragmentRunner.
-        try:
-            while not self.scheduler.check_pause():
-                try:
-                    self.fragment.device_setup()
-                    self.fragment.run_once()
-                    self._finish_continuous_point()
-                    if not self._continue_running:
-                        return True
-
-                    # One point is now finished, so reset transitory error counters for
-                    # the next one.
-                    self.num_current_transitory_errors = 0
-                    self.num_current_underflows = 0
-                except RTIOUnderflow:
-                    self.num_current_underflows += 1
-                    if self.num_current_underflows > self.max_rtio_underflow_retries:
-                        raise
-                    print("Ignoring RTIOUnderflow (", self.num_current_underflows, "/",
-                          self.max_rtio_underflow_retries, ")")
-                except RestartKernelTransitoryError:
-                    self.num_current_transitory_errors += 1
-                    if (self.num_current_transitory_errors >
-                            self.max_transitory_error_retries):
-                        raise
-                    print("Caught transitory error (",
-                          self.num_current_transitory_errors, "/",
-                          self.max_transitory_error_retries, "), restarting kernel")
-                    return False
-                except TransitoryError:
-                    self.num_current_transitory_errors += 1
-                    if (self.num_current_transitory_errors >
-                            self.max_transitory_error_retries):
-                        raise
-                    print("Caught transitory error (",
-                          self.num_current_transitory_errors, "/",
-                          self.max_transitory_error_retries, "), retrying")
-            return False
-        finally:
-            self.fragment.device_cleanup()
-        assert False, "Execution never reaches here, return is just to pacify compiler."
-        return True
-
-    @rpc(flags={"async"})
-    def _finish_continuous_point(self):
-        if self._is_time_series:
-            self._timestamp_sink.push(time.monotonic() - self._time_series_start)
-        else:
-            self._point_phase = not self._point_phase
-            self.set_dataset(self.dataset_prefix + "point_phase",
-                             self._point_phase,
-                             broadcast=True)
 
     def _set_completed(self):
         self.set_dataset(self.dataset_prefix + "completed", True, broadcast=True)
@@ -556,20 +485,30 @@ def make_fragment_scan_exp(
 
     return FragmentScanShim
 
-# TODO: need to create inner runner for this also to interact with wrapper
-# so fragment_runner_template and then just the params for this to work
-# call into the wrapped class to interface with the kernel
 class _FragmentRunner(HasEnvironment):
     """Object wrapping fragment execution to be able to execute everything in one kernel
     invocation (no difference for non-kernel fragments).
     """
+
+    def __init__(self, managers_or_parent, *args, **kwargs):
+        if isinstance(managers_or_parent, tuple):
+            self.tlr = self
+        else:
+            self.tlr = managers_or_parent
+        HasEnvironment.__init__(self, managers_or_parent, *args, **kwargs)
+
     def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
-              max_transitory_error_retries: int):
+              max_transitory_error_retries: int,
+              continue_running: bool = False,
+              is_time_series: bool = False
+          ):
         self.fragment = fragment
         self.max_rtio_underflow_retries = max_rtio_underflow_retries
         self.max_transitory_error_retries = max_transitory_error_retries
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
+        if is_kernel(self.fragment.run_once):
+            self.setattr_device("core")
 
         fragment_class = self.fragment.__class__.__name__
 
@@ -586,9 +525,12 @@ class _FragmentRunner(HasEnvironment):
         # TODO(srenblad): replace with loading from string if possible
         from .generated import once_runner
         self.runner = once_runner._InnerFragmentRunner(
+            self.tlr,
             fragment,
             max_rtio_underflow_retries,
-            max_transitory_error_retries
+            max_transitory_error_retries,
+            continue_running,
+            is_time_series
         )
 
     def run(self) -> bool:
@@ -597,7 +539,6 @@ class _FragmentRunner(HasEnvironment):
         :return: ``True`` if execution completed, ``False`` if it should be attempted
             again (RestartKernelTransitoryError).
         """
-        # TODO: Unify with FragmentScanExperiment._run_continuous().
         if is_kernel(self.fragment.run_once):
             self.runner._run()
         else:
@@ -635,6 +576,68 @@ class _FragmentRunner(HasEnvironment):
             self.fragment.device_cleanup()
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
+
+    def run_continuous(self):
+        self.tlr._point_phase = False
+        self.num_current_transitory_errors = 0
+        self.num_current_underflows = 0
+        try:
+            while True:
+                # After every pause(), pull in dataset changes (immediately as well to
+                # catch changes between the time the experiment is prepared and when it
+                # is run, to keep the semantics uniform).
+                self.fragment.recompute_param_defaults()
+                try:
+                    self.fragment.host_setup()
+                    if is_kernel(self.fragment.run_once):
+                        done = self.runner.run_continuous_kernel()
+                        self.core.comm.close()
+                        if done:
+                            break
+                    else:
+                        if self._continuous_loop():
+                            break
+                finally:
+                    self.fragment.host_cleanup()
+                self.tlr.scheduler.pause()
+        finally:
+            self.tlr._set_completed()
+
+    # TODO(srenblad): continuous looping on host
+    # def _continuous_loop(self):
+    #     try:
+    #         while not self.tlr.scheduler.check_pause():
+    #             try:
+    #                 self.fragment.device_setup()
+    #                 self.fragment.run_once()
+    #                 self._finish_continuous_point()
+    #                 if not self._continue_running:
+    #                     return True
+
+    #                 # One point is now finished, so reset transitory error counters for
+    #                 # the next one.
+    #                 self.num_current_transitory_errors = 0
+    #                 self.num_current_underflows = 0
+    #             except RTIOUnderflow:
+    #                 self.num_current_underflows += 1
+    #                 if self.num_current_underflows > self.max_rtio_underflow_retries:
+    #                     raise
+    #             except RestartKernelTransitoryError:
+    #                 self.num_current_transitory_errors += 1
+    #                 if (self.num_current_transitory_errors >
+    #                         self.max_transitory_error_retries):
+    #                     raise
+    #                 return False
+    #             except TransitoryError:
+    #                 self.num_current_transitory_errors += 1
+    #                 if (self.num_current_transitory_errors >
+    #                         self.max_transitory_error_retries):
+    #                     raise
+    #         return False
+    #     finally:
+    #         self.fragment.device_cleanup()
+    #     assert False, "Execution never reaches here, return is just to pacify compiler."
+    #     return True
 
 
 def run_fragment_once(
