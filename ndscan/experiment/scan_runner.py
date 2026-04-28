@@ -10,8 +10,6 @@ import logging
 import numpy as np
 from artiq.coredevice.exceptions import RTIOUnderflow
 from artiq.language import HasEnvironment, kernel, rpc
-from artiq.tools import load_with_loader
-from artiq.master.worker_impl import StringLoader
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
@@ -19,6 +17,7 @@ from typing import Any
 from string import Template
 import os
 import textwrap
+from .generated_modules import GEN_MODULE_HANDLER
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, TransitoryError, RestartKernelTransitoryError
 from .parameters import ParamStore
@@ -244,7 +243,6 @@ class HostScanRunner(ScanRunner):
                 self._fragment.device_cleanup()
 
 
-# this relies on the existence of a kernel_runner_internal which is templated due to the lack of metaprogramming and generics
 class KernelScanRunner(ScanRunner):
     # Note: ARTIQ Python is currently severely limited in its support for generics or
     # metaprogramming. While the interface for this class is effortlessly generic, the
@@ -254,12 +252,6 @@ class KernelScanRunner(ScanRunner):
               axis_sinks: list[ResultSink]) -> None:
         self._fragment = fragment
         fragment_class = self._fragment.__class__.__name__
-        fragment_module = fragment.__class__.__module__
-        # template
-        file_dir = os.path.dirname(__file__)
-        with open(os.path.join(file_dir, "kernel_runner_template.py"), "r") as f:
-            s = f.read()
-        self._internal_runner_template = Template(s)
 
         # Set up members to be accessed from the kernel through the
         # _get_param_values_chunk RPC call later.
@@ -281,7 +273,7 @@ class KernelScanRunner(ScanRunner):
             param_store_types += f"_param_store_{i}: Kernel[{axis.param_store.__class__.__name__}]\n"
 
         param_store_types = textwrap.indent(param_store_types, "    ")
-    
+
         # then the run_chunk function
         param_decl = " ".join(f"p{idx}," for idx in range(len(axes)))
         run_chunk = "@portable\n"
@@ -295,20 +287,16 @@ class KernelScanRunner(ScanRunner):
         run_chunk += "        if self._run_point():\n"
         run_chunk += "            return 1\n"
         run_chunk += "    return 0"
-        
-        self._internal_runner_string = self._internal_runner_template.substitute(
+
+        GEN_MODULE_HANDLER.add_runner(
             run_chunk=textwrap.indent(run_chunk, "    "),
             param_values_return_value=param_values_return_value,
             param_store_types=param_store_types,
             fragment_class=fragment_class,
-            fragment_module=fragment_module
         )
-        with open(os.path.join(file_dir, "generated/runner.py"), "w+") as f:
-            f.write(self._internal_runner_string)
-        # # TODO the actual runner (for now we will synthezise a string and examine it for issues)
-        # module = load_with_loader(StringLoader("<synthesized>", self._internal_runner_string))
-        from .generated import runner
-        self._internal_runner = runner.InternalKernelScanRunner(
+
+        generated = GEN_MODULE_HANDLER.execute_module()
+        self._internal_runner = generated.InnerScanRunner(
             self,
             self._fragment,
             self._axes,
@@ -317,14 +305,6 @@ class KernelScanRunner(ScanRunner):
             self.max_transitory_error_retries,
             self.skip_on_persistent_transitory_error,
         )
-        # # we might have to do this in some other function tbh
-        # self._inner_fragment = fragment_module.InternalFragment()
-        # then pass it along innit
-        # self._internal_runner = module.InternalKernelScanRunner(
-        #   self._fragment,
-        #   self._axes,
-        #   self._axis_sinks
-        # )
 
     def set_points(self, points):
         self._internal_runner.set_points(points)

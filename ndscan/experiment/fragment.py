@@ -8,6 +8,7 @@ import textwrap
 from string import Template
 import os
 
+from .generated_modules import GEN_MODULE_HANDLER
 from .default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
 from .parameters import ParamHandle, ParamStore, ParamBase
 from .result_channels import ResultChannel, FloatChannel
@@ -131,12 +132,8 @@ class Fragment(HasEnvironment):
             code = "pass"
 
         self._device_cleanup_string = textwrap.indent(code, "        ")
-        
-        file_dir = os.path.dirname(__file__)
-        with open(os.path.join(file_dir, "kernel_fragment_template.py"), "r") as f:
-            template = f.read()
-        
-        templated_str = Template(template).substitute(
+
+        GEN_MODULE_HANDLER.add_fragment(
             device_cleanup=self._device_cleanup_string,
             device_setup=self._device_setup_string,
             fragment_name=klass.__name__,
@@ -145,9 +142,6 @@ class Fragment(HasEnvironment):
             subfrags_imports=subfrags_imports,
             subfrags_const=subfrags_const
         )
-        self.name = "_".join(fragment_path)
-        with open(os.path.join(file_dir, f"generated/{klass.__name__ + self.name}.py"), "w+") as f:
-            f.write(templated_str)
 
     def _has_trivial_device_setup(self):
         assert not self._building
