@@ -24,6 +24,7 @@ import os
 from typing import Any
 from string import Template
 
+from .generated_modules import GEN_MODULE_HANDLER
 from .default_analysis import AnnotationContext
 from .fragment import (ExpFragment, Fragment, RestartKernelTransitoryError,
                        TransitoryError)
@@ -512,19 +513,10 @@ class _FragmentRunner(HasEnvironment):
 
         fragment_class = self.fragment.__class__.__name__
 
-        file_dir = os.path.dirname(__file__)
-        with open(os.path.join(file_dir, "kernel_once_runner_template.py"), "r") as f:
-            template = f.read()
-        
-        templated_str = Template(template).substitute(
-            fragment_class=fragment_class
-        )
-        with open(os.path.join(file_dir, f"generated/once_runner.py"), "w+") as f:
-            f.write(templated_str)
+        GEN_MODULE_HANDLER.add_noscan_runner(fragment_class=fragment_class)
 
-        # TODO(srenblad): replace with loading from string if possible
-        from .generated import once_runner
-        self.runner = once_runner._InnerFragmentRunner(
+        generated = GEN_MODULE_HANDLER.execute_module()
+        self.runner = generated.InnerNoScanRunner(
             self.tlr,
             fragment,
             max_rtio_underflow_retries,
