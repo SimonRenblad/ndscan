@@ -94,9 +94,8 @@ class Fragment(HasEnvironment):
         for s in self._subfragments:
             name = s.__class__.__name__
             fname = s._fragment_path[-1]
-            subfrags_types += f"    {fname}: Kernel[Wrapper{name}]\n"
-            subfrags_imports += f"from .{name}{fname} import Wrapper{name}\n"
-            subfrags_const += f"if s.__class__.__name__ == '{name}':\n    self.{fname} = Wrapper{name}(s)\n"
+            subfrags_types += f"    {fname}: Kernel[Inner{name}]\n"
+            subfrags_const += f"if s.__class__.__name__ == '{name}':\n    self.{fname} = Inner{name}(s)\n"
             if s in self._detached_subfragments:
                 continue
             if s._has_trivial_device_setup():
@@ -133,14 +132,26 @@ class Fragment(HasEnvironment):
 
         self._device_cleanup_string = textwrap.indent(code, "        ")
 
+        subscan_type = ""
+        run_once_behavior = ""
+        subscan_init = ""
+        if self._subscan is not None:
+            run_once_behavior = "self.subscan.acquire()"
+            subscan_type = f"subscan: KernelInvariant[{self._subscan._fragment.__class__.__name__}Subscan]"
+            subscan_init = f"self.subscan = {self._subscan._fragment.__class__.__name}Subscan(self.fragment._subscan)"
+        else:
+            run_once_behavior="self.fragment.run_once()"
+
         GEN_MODULE_HANDLER.add_fragment(
             device_cleanup=self._device_cleanup_string,
             device_setup=self._device_setup_string,
             fragment_name=klass.__name__,
             fragment_module=klass.__module__,
             subfrags_types=subfrags_types,
-            subfrags_imports=subfrags_imports,
-            subfrags_const=subfrags_const
+            subfrags_const=subfrags_const,
+            subscan_type=subscan_type,
+            subscan_init=subscan_init,
+            run_once_behavior=run_once_behavior
         )
 
     def _has_trivial_device_setup(self):

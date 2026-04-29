@@ -288,7 +288,9 @@ class KernelScanRunner(ScanRunner):
         run_chunk += "            return 1\n"
         run_chunk += "    return 0"
 
+        runner_name = fragment_class + "Runner"
         GEN_MODULE_HANDLER.add_runner(
+            runner_name=runner_name,
             run_chunk=textwrap.indent(run_chunk, "    "),
             param_values_return_value=param_values_return_value,
             param_store_types=param_store_types,
@@ -296,7 +298,7 @@ class KernelScanRunner(ScanRunner):
         )
 
         generated = GEN_MODULE_HANDLER.execute_module()
-        self._internal_runner = generated.InnerScanRunner(
+        self._internal_runner = getattr(generated, runner_name)(
             self,
             self._fragment,
             self._axes,

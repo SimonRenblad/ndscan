@@ -7,6 +7,7 @@ from collections import OrderedDict
 from copy import copy
 from functools import reduce
 from artiq.language import kernel, portable, rpc
+from .generated_modules import GEN_MODULE_HANDLER
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, Fragment, RestartKernelTransitoryError
 from .parameters import ParamHandle
@@ -48,6 +49,8 @@ class Subscan:
         self._short_child_channel_names = short_child_channel_names
         self._analyses = analyses
         self._parent_analysis_result_channels = parent_analysis_result_channels
+        GEN_MODULE_HANDLER.add_subscan(subscan_name=self._fragment.__class__.__name__ + "Subscan",
+                                       runner_name=self._fragment.__class__.__name__ + "Runner")
 
     def run(
         self,
@@ -346,27 +349,9 @@ def setup_subscan(result_target: Fragment,
                                                    new_channel)
             parent_analysis_result_channels[name] = new_channel
 
-    # TODO(srenblad): we dont need to worry about this cludginess, however we
-    # do need create a different name for the "Inner" subscan runner such that
-    # we can have multiple generated runners. 
-    # KLUDGE: If we end up running on the kernel, the ARTIQ compiler needs to treat the
-    # "inner" (subscan) and "outer" (TopLevelRunner/…) ScanRunner instances differently
-    # in terms of types.
-    class RunnerInstance(select_runner_class(scanned_fragment)):
-        # KLUDGE: In particular, when we manually set the return type annotations for
-        # the parameter value fetching RPC, this should only affect this instance, so
-        # override the function. (Would just cloning the function/wrapping it in
-        # ScanRunner work?)
-        def _get_param_values_chunk(self):
-            return super()._get_param_values_chunk()
+    runner = select_runner_class(scanned_fragment)(result_target)
 
-    runner = RunnerInstance(result_target)
-
-    class SubscanInstance(Subscan):
-        # ARTIQ compiler needs a different type for each RunnerInstance.
-        pass
-
-    return SubscanInstance(runner, scanned_fragment, axes, spec_channel,
+    return Subscan(runner, scanned_fragment, axes, spec_channel,
                            coordinate_channels, child_result_sinks,
                            aggregate_result_channels, short_child_channel_names,
                            analyses, parent_analysis_result_channels)
@@ -488,8 +473,6 @@ class SubscanExpFragment(ExpFragment):
         # FIXME: Fix subscan model name inference code, remove "_".
         self._subscan = setup_subscan(self, "_", scanned_fragment, axis_params,
                                       save_results_by_default, expose_analysis_results)
-        if is_kernel(scanned_fragment.run_once):
-            self.run_once = self._kernel_run_once
 
     def configure(
         self,
@@ -527,17 +510,14 @@ class SubscanExpFragment(ExpFragment):
         self._scanned_fragment.host_cleanup()
         super().host_cleanup()
 
-    def run_once(self) -> None:
-        """Execute the subscan as previously configured.
+    # TODO(srenblad): support host-host subscanning (right now only kernel-kernel)
+    # def run_once(self) -> None:
+    #     """Execute the subscan as previously configured.
 
-        This has the usual semantics of a fragment ``run_once()`` method, i.e. calling
-        it will acquire one set of results for the fragment (here, a complete scan) and
-        write them to the result channels. If the scanned fragment has an ``@kernel``
-        ``run_once()`` method, this will automatically be made a ``@kernel`` method as
-        well.
-        """
-        self._subscan.acquire()
-
-    @kernel
-    def _kernel_run_once(self):
-        self._subscan.acquire()
+    #     This has the usual semantics of a fragment ``run_once()`` method, i.e. calling
+    #     it will acquire one set of results for the fragment (here, a complete scan) and
+    #     write them to the result channels. If the scanned fragment has an ``@kernel``
+    #     ``run_once()`` method, this will automatically be made a ``@kernel`` method as
+    #     well.
+    #     """
+    #     self._subscan.acquire()

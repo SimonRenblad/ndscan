@@ -32,12 +32,14 @@ from {fragment_module} import {fragment_name}
 @compile
 class Inner{fragment_name}:
     fragment: KernelInvariant[{fragment_name}]
+    {subscan_type}
 {subfrags_types}
 
     def __init__(self, fragment, *args, **kwargs):
         self.fragment = fragment
         for s in self.fragment._subfragments:
 {subfrags_const}
+        {subscan_init}
 
     @portable
     def device_setup_subfragments(self):
@@ -59,7 +61,7 @@ class Inner{fragment_name}:
 
     @portable
     def run_once(self):
-        self.fragment.run_once()
+        {run_once_behavior}
 """
 
 
@@ -69,7 +71,7 @@ _RUN_CHUNK_INTERRUPTED = 1
 _RUN_CHUNK_SCAN_COMPLETE = 2
 
 @compile
-class InnerScanRunner:
+class {runner_name}:
     _fragment: KernelInvariant[Inner{fragment_class}]
     _pause_check_interval_mu: Kernel[int64]
     _last_pause_check_mu: Kernel[int64]
@@ -360,6 +362,30 @@ class InnerNoScanRunner:
                              f._point_phase,
                              broadcast=True)
 """
+
+
+_subscan_template = """
+@compile
+class {subscan_name}:
+    runner: KernelInvariant[{runner_name}]
+
+    def __init__(self, outer):
+        self.outer = outer
+        self.runner = outer.runner._internal_runner
+
+    @kernel
+    def acquire(self):
+        if not self.runner.acquire():
+            raise RestartKernelTransitoryError("Subscan interrupted by pause request")
+        self._finalize()
+
+    @rpc(flags={"async"})
+    def _finalize(self):
+        self.outer._push_results()
+        self.outer._regenerate_points()
+"""
+
+
 class GeneratedModuleHandler:
     def __init__(self, name="ndscan__generated"):
         self.backing_string = _header_imports.format()
@@ -384,8 +410,10 @@ class GeneratedModuleHandler:
         self.backing_string += "\n\n"
         self.backing_string += r
 
-    def add_subscan_runner(self, *args, **kwargs):
-        pass
+    def add_subscan(self, *args, **kwargs):
+        s = _subscan_template.format(*args, **kwargs)
+        self.backing_string += "\n\n"
+        self.backing_string += s
 
     def add_noscan_runner(self, *args, **kwargs):
         r = _runner_noscan_template.format(*args, **kwargs)
@@ -393,7 +421,7 @@ class GeneratedModuleHandler:
         self.backing_string += r
 
     def dump_source_code(self, filename):
-        with open(filename, "w", encoding="utf8") as f:
+        with open(filename, "w") as f:
             f.write(self.backing_string)
 
 
