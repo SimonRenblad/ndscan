@@ -7,7 +7,7 @@ from collections import OrderedDict
 from copy import copy
 from functools import reduce
 from artiq.language import kernel, portable, rpc
-from .generated_modules import GEN_MODULE_HANDLER
+from .generated_modules import GeneratedModuleHandler
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, Fragment, RestartKernelTransitoryError
 from .parameters import ParamHandle
@@ -29,6 +29,7 @@ class Subscan:
     def __init__(
         self,
         runner: ScanRunner,
+        owner: ExpFragment,
         fragment: ExpFragment,
         possible_axes: dict[ParamHandle, ScanAxis],
         schema_channel: SubscanChannel,
@@ -39,6 +40,7 @@ class Subscan:
         analyses: list[DefaultAnalysis],
         parent_analysis_result_channels: dict[str, ResultChannel],
     ):
+        self._owner = owner
         self._runner = runner
         self._fragment = fragment
         self._possible_axes = possible_axes
@@ -49,8 +51,21 @@ class Subscan:
         self._short_child_channel_names = short_child_channel_names
         self._analyses = analyses
         self._parent_analysis_result_channels = parent_analysis_result_channels
-        GEN_MODULE_HANDLER.add_subscan(subscan_name=self._fragment.__class__.__name__ + "Subscan",
-                                       runner_name=self._fragment.__class__.__name__ + "Runner")
+        # TODO(srenblad): foolproof naming
+        frag_name = ""
+        if len(self._owner._fragment_path) != 0:
+            frag_name = self._owner._fragment_path[-1]
+        self.module_name = "ndscan_generated__" + frag_name + "__" + self._fragment._fragment_path[-1] + "__subscan"
+        self.gen_mod_handler = GeneratedModuleHandler(name=self.module_name)
+
+        runner_import = f"from {self._fragment.fragment_module_name + "__scan_runner"} import Inner{self._runner.__class__.__name__}"
+
+        # will need knowledge of the OWNED runner + fragment
+        self.gen_mod_handler.add_subscan(
+            runner_name="Inner" + self._runner.__class__.__name__,
+            subscan_name="Inner" + self.__class__.__name__,
+            runner_import=runner_import
+        )
 
     def run(
         self,
@@ -101,24 +116,27 @@ class Subscan:
 
         self._spec = ScanSpec(axes, generators, options)
         self._runner.setup(self._fragment, axes, list(self._coordinate_sinks.values()))
+        generated = self.gen_mod_handler.execute_module()
+        self.inner_subscan = getattr(generated, "Inner" + self.__class__.__name__)(self.owner, self._runner)
+        self._owner.inner_fragment.init_subscan(self.inner_subscan)
         self._regenerate_points()
 
     def _regenerate_points(self):
         self._runner.set_points(
             generate_points(self._spec.generators, self._spec.options))
 
-    @portable
-    def acquire(self, execute_default_analyses=False):
-        if not self._runner.acquire():
-            raise RestartKernelTransitoryError("Subscan interrupted by pause request")
-        self._finalize(execute_default_analyses)
+    # @portable
+    # def acquire(self, execute_default_analyses=False):
+    #     if not self._runner.acquire():
+    #         raise RestartKernelTransitoryError("Subscan interrupted by pause request")
+    #     self._finalize(execute_default_analyses)
 
-    @rpc(flags={"async"})
-    def _finalize(self, execute_default_analyses):
-        # Return is ignored for on-kernel-friendly scans.
-        self._push_results(execute_default_analyses)
-        # Prepare for next subscan.
-        self._regenerate_points()
+    # @rpc(flags={"async"})
+    # def _finalize(self, execute_default_analyses):
+    #     # Return is ignored for on-kernel-friendly scans.
+    #     self._push_results(execute_default_analyses)
+    #     # Prepare for next subscan.
+    #     self._regenerate_points()
 
     def _push_results(self, execute_default_analyses):
         analysis_schema, analysis_results = self._handle_default_analyses(
@@ -351,7 +369,7 @@ def setup_subscan(result_target: Fragment,
 
     runner = select_runner_class(scanned_fragment)(result_target)
 
-    return Subscan(runner, scanned_fragment, axes, spec_channel,
+    return Subscan(runner, result_target, scanned_fragment, axes, spec_channel,
                            coordinate_channels, child_result_sinks,
                            aggregate_result_channels, short_child_channel_names,
                            analyses, parent_analysis_result_channels)

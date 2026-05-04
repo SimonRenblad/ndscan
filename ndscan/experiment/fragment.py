@@ -8,7 +8,7 @@ import textwrap
 from string import Template
 import os
 
-from .generated_modules import GEN_MODULE_HANDLER
+from .generated_modules import GeneratedModuleHandler
 from .default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
 from .parameters import ParamHandle, ParamStore, ParamBase
 from .result_channels import ResultChannel, FloatChannel
@@ -40,6 +40,11 @@ class Fragment(HasEnvironment):
         :param args: Arguments to be forwarded to :meth:`build_fragment`.
         :param kwargs: Keyword arguments to be forwarded to :meth:`build_fragment`.
         """
+        self.fragment_module_name = "ndscan_generated"
+        for s in fragment_path:
+            self.fragment_module_name += "__" + s
+        self.gen_mod_handler = GeneratedModuleHandler(name=self.fragment_module_name)
+
         self._fragment_path = fragment_path
         self._subfragments = []
 
@@ -61,6 +66,9 @@ class Fragment(HasEnvironment):
         #: Subfragments detached from the normal fragment execution (setup/cleanup,
         #: result channels; e.g. for subscans).
         self._detached_subfragments = set()
+
+        # by default the fragment does not contain a subscan
+        self._subscan = None
 
         klass = self.__class__
         mod = klass.__module__
@@ -89,13 +97,12 @@ class Fragment(HasEnvironment):
         # device_cleanup() to forward to subfragments.
         subfrags_types = ""
         subfrags_imports = ""
-        subfrags_const = ""
         code = ""
         for s in self._subfragments:
             name = s.__class__.__name__
             fname = s._fragment_path[-1]
             subfrags_types += f"    {fname}: Kernel[Inner{name}]\n"
-            subfrags_const += f"if s.__class__.__name__ == '{name}':\n    self.{fname} = Inner{name}(s)\n"
+            subfrags_imports += f"from {s.fragment_module_name} import Inner{name}\n"
             if s in self._detached_subfragments:
                 continue
             if s._has_trivial_device_setup():
@@ -107,10 +114,6 @@ class Fragment(HasEnvironment):
             self._all_subfragment_setup_trivial = True
             code = "pass"
 
-        if not subfrags_const:
-            subfrags_const = "break"
-        subfrags_const = textwrap.indent(subfrags_const, "            ")
-        
         self._device_setup_string = textwrap.indent(code, "        ")
 
         code = ""
@@ -134,25 +137,30 @@ class Fragment(HasEnvironment):
 
         subscan_type = ""
         run_once_behavior = ""
-        subscan_init = ""
+        subscan_import = ""
         if self._subscan is not None:
+            subscan_frag_name = self._subscan._fragment.__class__.__name__
+            runner_name = subscan_frag_name + "Runner"
+            subscan_name = subscan_frag_name + "Subscan"
             run_once_behavior = "self.subscan.acquire()"
-            subscan_type = f"subscan: KernelInvariant[{self._subscan._fragment.__class__.__name__}Subscan]"
-            subscan_init = f"self.subscan = {self._subscan._fragment.__class__.__name}Subscan(self.fragment._subscan)"
+            subscan_import = f"from {self._subscan.module_name} import {subscan_name}"
+            subscan_type = f"subscan: KernelInvariant[{subscan_name}]"
         else:
             run_once_behavior="self.fragment.run_once()"
 
-        GEN_MODULE_HANDLER.add_fragment(
+        self.gen_mod_handler.add_fragment(
             device_cleanup=self._device_cleanup_string,
             device_setup=self._device_setup_string,
             fragment_name=klass.__name__,
             fragment_module=klass.__module__,
             subfrags_types=subfrags_types,
-            subfrags_const=subfrags_const,
             subscan_type=subscan_type,
-            subscan_init=subscan_init,
-            run_once_behavior=run_once_behavior
+            subscan_import=subscan_import,
+            run_once_behavior=run_once_behavior,
+            subfrags_imports=subfrags_imports
         )
+        generated = self.gen_mod_handler.execute_module()
+        self.inner_fragment = getattr(generated, "Inner" + klass.__name__)(self)
 
     def _has_trivial_device_setup(self):
         assert not self._building

@@ -24,7 +24,7 @@ import os
 from typing import Any
 from string import Template
 
-from .generated_modules import GEN_MODULE_HANDLER
+from .generated_modules import GeneratedModuleHandler
 from .default_analysis import AnnotationContext
 from .fragment import (ExpFragment, Fragment, RestartKernelTransitoryError,
                        TransitoryError)
@@ -503,6 +503,7 @@ class _FragmentRunner(HasEnvironment):
               continue_running: bool = False,
               is_time_series: bool = False
           ):
+        self.gen_module_handler = GeneratedModuleHandler(name=fragment.fragment_module_name + "__noscan_runner")
         self.fragment = fragment
         self.max_rtio_underflow_retries = max_rtio_underflow_retries
         self.max_transitory_error_retries = max_transitory_error_retries
@@ -512,10 +513,11 @@ class _FragmentRunner(HasEnvironment):
             self.setattr_device("core")
 
         fragment_class = self.fragment.__class__.__name__
+        fragment_import = f"from {self.fragment.fragment_module_name} import Inner{fragment_class}"
 
-        GEN_MODULE_HANDLER.add_noscan_runner(fragment_class=fragment_class)
+        self.gen_module_handler.add_noscan_runner(fragment_class=fragment_class, fragment_import=fragment_import)
 
-        generated = GEN_MODULE_HANDLER.execute_module()
+        generated = self.gen_module_handler.execute_module()
         self.runner = generated.InnerNoScanRunner(
             self.tlr,
             fragment,

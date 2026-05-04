@@ -17,7 +17,7 @@ from typing import Any
 from string import Template
 import os
 import textwrap
-from .generated_modules import GEN_MODULE_HANDLER
+from .generated_modules import GeneratedModuleHandler
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, TransitoryError, RestartKernelTransitoryError
 from .parameters import ParamStore
@@ -250,6 +250,8 @@ class KernelScanRunner(ScanRunner):
 
     def setup(self, fragment: ExpFragment, axes: list[ScanAxis],
               axis_sinks: list[ResultSink]) -> None:
+
+        self.gen_module_handler = GeneratedModuleHandler(name=fragment.fragment_module_name + "__scan_runner")
         self._fragment = fragment
         fragment_class = self._fragment.__class__.__name__
 
@@ -289,15 +291,19 @@ class KernelScanRunner(ScanRunner):
         run_chunk += "    return 0"
 
         runner_name = fragment_class + "Runner"
-        GEN_MODULE_HANDLER.add_runner(
+
+        fragment_import = f"from {self._fragment.fragment_module_name} import Inner{fragment_class}"
+        
+        self.gen_module_handler.add_runner(
             runner_name=runner_name,
             run_chunk=textwrap.indent(run_chunk, "    "),
             param_values_return_value=param_values_return_value,
             param_store_types=param_store_types,
             fragment_class=fragment_class,
+            fragment_import=fragment_import
         )
 
-        generated = GEN_MODULE_HANDLER.execute_module()
+        generated = self.gen_module_handler.execute_module()
         self._internal_runner = getattr(generated, runner_name)(
             self,
             self._fragment,

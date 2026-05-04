@@ -28,6 +28,8 @@ def log_failed_cleanup(path: str):
 
 _fragment_template = """
 from {fragment_module} import {fragment_name}
+{subscan_import}
+{subfrags_imports}
 
 @compile
 class Inner{fragment_name}:
@@ -38,8 +40,10 @@ class Inner{fragment_name}:
     def __init__(self, fragment, *args, **kwargs):
         self.fragment = fragment
         for s in self.fragment._subfragments:
-{subfrags_const}
-        {subscan_init}
+            setattr(self, s._fragment_path[-1], s.inner_fragment)
+
+    def init_subscan(self, subscan):
+        self.subscan = subscan
 
     @portable
     def device_setup_subfragments(self):
@@ -66,6 +70,8 @@ class Inner{fragment_name}:
 
 
 _runner_template = """
+{fragment_import}
+
 _RUN_CHUNK_PROCEED = 0
 _RUN_CHUNK_INTERRUPTED = 1
 _RUN_CHUNK_SCAN_COMPLETE = 2
@@ -86,7 +92,7 @@ class {runner_name}:
                  skip_on_persistent_transitory_error):
         self.core = runner.core
         self.scheduler = runner.scheduler
-        self._fragment = Inner{fragment_class}(fragment)
+        self._fragment = fragment.inner_fragment
         self._axes = axes
         self._axis_sinks = axis_sinks
 
@@ -251,10 +257,12 @@ class {runner_name}:
         return not self._current_chunk
 """
 
-_runner_noscan_template = """  
+_runner_noscan_template = """
+{fragment_import}
+
 @compile
 class InnerNoScanRunner:
-    fragment: KernelInvariant[Inner$fragment_class]
+    fragment: KernelInvariant[Inner{fragment_class}]
     core: KernelInvariant[Core]
     max_rtio_underflow_retries: KernelInvariant[int32]
     max_transitory_error_retries: KernelInvariant[int32]
@@ -270,7 +278,7 @@ class InnerNoScanRunner:
              ):
         self.runner = runner
         self.core = runner.core
-        self.fragment = Inner$fragment_class(fragment)
+        self.fragment = Inner{fragment_class}(fragment)
         self.max_rtio_underflow_retries = max_rtio_underflow_retries
         self.max_transitory_error_retries = max_transitory_error_retries
         self.num_underflows_caught = 0
@@ -351,7 +359,7 @@ class InnerNoScanRunner:
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
 
-    @rpc(flags={"async"})
+    @rpc(flags={{"async"}})
     def _finish_continuous_point(self):
         f = self.runner
         if f._is_time_series:
@@ -364,14 +372,18 @@ class InnerNoScanRunner:
 """
 
 
+# should be appended to the OWNER fragment
+# TODO(srenblad): make a separate module asw
 _subscan_template = """
+{runner_import}
+
 @compile
 class {subscan_name}:
     runner: KernelInvariant[{runner_name}]
 
-    def __init__(self, outer):
-        self.outer = outer
-        self.runner = outer.runner._internal_runner
+    def __init__(self, owner, runner):
+        self.owner = owner
+        self.runner = runner
 
     @kernel
     def acquire(self):
@@ -379,10 +391,10 @@ class {subscan_name}:
             raise RestartKernelTransitoryError("Subscan interrupted by pause request")
         self._finalize()
 
-    @rpc(flags={"async"})
+    @rpc(flags={{"async"}})
     def _finalize(self):
-        self.outer._push_results()
-        self.outer._regenerate_points()
+        self.owner._push_results()
+        self.owner._regenerate_points()
 """
 
 
@@ -421,10 +433,5 @@ class GeneratedModuleHandler:
         self.backing_string += r
 
     def dump_source_code(self, filename):
-        with open(filename, "w") as f:
+        with open(filename, "w+") as f:
             f.write(self.backing_string)
-
-
-GEN_MODULE_HANDLER = GeneratedModuleHandler()
-
-
