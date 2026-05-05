@@ -9,7 +9,7 @@ from itertools import islice
 import numpy as np
 from numpy import int32, int64
 from artiq.coredevice.core import Core
-from ndscan.experiment.fragment import Fragment
+from ndscan.experiment.fragment import Fragment, log_failed_cleanup
 from ndscan.experiment.scan_runner import ResultBatcher
 from ndscan.experiment.parameters import FloatParamStore, IntParamStore, BoolParamStore
 from ndscan.experiment.result_channels import ResultChannel, FloatChannel
@@ -18,17 +18,11 @@ from ndscan.experiment import (kernel, rpc, compile, Kernel, KernelInvariant, po
                                RTIOUnderflow, print_rpc, RestartKernelTransitoryError,
                                TransitoryError)
 
-logger = logging.getLogger(__name__)
-
-@rpc(flags={{"async"}})
-def log_failed_cleanup(path: str):
-    logger.error(f"device_cleanup() failed for '{{path}}'.")
 """
 
 
 _fragment_template = """
 from {fragment_module} import {fragment_name}
-{subscan_import}
 {subfrags_imports}
 
 @compile
@@ -39,11 +33,10 @@ class Inner{fragment_name}:
 
     def __init__(self, fragment, *args, **kwargs):
         self.fragment = fragment
+        if fragment.inner_subscan is not None:
+            self.subscan = fragment.inner_subscan
         for s in self.fragment._subfragments:
             setattr(self, s._fragment_path[-1], s.inner_fragment)
-
-    def init_subscan(self, subscan):
-        self.subscan = subscan
 
     @portable
     def device_setup_subfragments(self):
@@ -373,9 +366,9 @@ class InnerNoScanRunner:
 
 
 # should be appended to the OWNER fragment
-# TODO(srenblad): make a separate module asw
+# TODO(srenblad): ensure this works for nested continuous / run once runners asw?
 _subscan_template = """
-{runner_import}
+from {fragment_module_name}__scan_runner import {runner_name}
 
 @compile
 class {subscan_name}:

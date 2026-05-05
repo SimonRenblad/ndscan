@@ -22,6 +22,10 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+@rpc(flags={"async"})
+def log_failed_cleanup(path: str):
+    logger.error(f"device_cleanup() failed for '{path}'.")
+
 
 class Fragment(HasEnvironment):
     """Main building block."""
@@ -137,30 +141,28 @@ class Fragment(HasEnvironment):
 
         subscan_type = ""
         run_once_behavior = ""
-        subscan_import = ""
         if self._subscan is not None:
             subscan_frag_name = self._subscan._fragment.__class__.__name__
-            runner_name = subscan_frag_name + "Runner"
             subscan_name = subscan_frag_name + "Subscan"
             run_once_behavior = "self.subscan.acquire()"
-            subscan_import = f"from {self._subscan.module_name} import {subscan_name}"
             subscan_type = f"subscan: KernelInvariant[{subscan_name}]"
         else:
             run_once_behavior="self.fragment.run_once()"
 
+        self.fragment_name = klass.__name__
+        self.inner_subscan = None
+        self.inner_fragment = None
+
         self.gen_mod_handler.add_fragment(
             device_cleanup=self._device_cleanup_string,
             device_setup=self._device_setup_string,
-            fragment_name=klass.__name__,
+            fragment_name=self.fragment_name,
             fragment_module=klass.__module__,
             subfrags_types=subfrags_types,
             subscan_type=subscan_type,
-            subscan_import=subscan_import,
             run_once_behavior=run_once_behavior,
-            subfrags_imports=subfrags_imports
+            subfrags_imports=subfrags_imports,
         )
-        generated = self.gen_mod_handler.execute_module()
-        self.inner_fragment = getattr(generated, "Inner" + klass.__name__)(self)
 
     def _has_trivial_device_setup(self):
         assert not self._building
@@ -171,6 +173,16 @@ class Fragment(HasEnvironment):
         assert not self._building
         empty_cleanup = self.device_cleanup.__func__ is Fragment.device_cleanup
         return empty_cleanup and self._all_subfragment_cleanup_trivial
+
+    # must be last step before compiling kernel
+    def execute_generated_module(self):
+        for s in self._subfragments:
+            if s not in self._detached_subfragments:
+                s.execute_generated_module()
+        generated = self.gen_mod_handler.execute_module()
+        if self._subscan is not None:
+            self.inner_subscan = getattr(generated, self._subscan.subscan_name)
+        self.inner_fragment = getattr(generated, "Inner" + self.fragment_name)(self)
 
     def host_setup(self):
         """Perform host-side initialisation.

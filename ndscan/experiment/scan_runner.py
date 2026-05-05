@@ -113,9 +113,10 @@ class ScanRunner(HasEnvironment):
                 # FIXME: Need to handle transitory errors here.
                 fragment.host_setup()
 
+                # HACK: perform magical incantation
+                self.execute_generated_module()
+
                 # For on-core-device scans, we'll spawn a kernel here.
-                # TODO: this is where the generated kernel will have to start
-                # everything must be ready for here.
                 if self.acquire():
                     return
             finally:
@@ -290,12 +291,12 @@ class KernelScanRunner(ScanRunner):
         run_chunk += "            return 1\n"
         run_chunk += "    return 0"
 
-        runner_name = fragment_class + "Runner"
+        self.runner_name = fragment_class + "Runner"
 
         fragment_import = f"from {self._fragment.fragment_module_name} import Inner{fragment_class}"
         
         self.gen_module_handler.add_runner(
-            runner_name=runner_name,
+            runner_name=self.runner_name,
             run_chunk=textwrap.indent(run_chunk, "    "),
             param_values_return_value=param_values_return_value,
             param_store_types=param_store_types,
@@ -303,8 +304,12 @@ class KernelScanRunner(ScanRunner):
             fragment_import=fragment_import
         )
 
+    # must be called either by subscans or right before compilation for the top level runner
+    def execute_generated_module(self):
+        # runner imports the scanned fragment
+        self._fragment.execute_generated_module()
         generated = self.gen_module_handler.execute_module()
-        self._internal_runner = getattr(generated, runner_name)(
+        self._internal_runner = getattr(generated, self.runner_name)(
             self,
             self._fragment,
             self._axes,

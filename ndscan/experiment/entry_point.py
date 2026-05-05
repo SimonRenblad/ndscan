@@ -509,6 +509,8 @@ class _FragmentRunner(HasEnvironment):
         self.max_transitory_error_retries = max_transitory_error_retries
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
+        self.continue_running = continue_running
+        self.is_time_series = is_time_series
         if is_kernel(self.fragment.run_once):
             self.setattr_device("core")
 
@@ -517,14 +519,17 @@ class _FragmentRunner(HasEnvironment):
 
         self.gen_module_handler.add_noscan_runner(fragment_class=fragment_class, fragment_import=fragment_import)
 
+
+    def execute_generated_module(self):
+        self.fragment.execute_generated_module()
         generated = self.gen_module_handler.execute_module()
         self.runner = generated.InnerNoScanRunner(
             self.tlr,
-            fragment,
-            max_rtio_underflow_retries,
-            max_transitory_error_retries,
-            continue_running,
-            is_time_series
+            self.fragment,
+            self.max_rtio_underflow_retries,
+            self.max_transitory_error_retries,
+            self.continue_running,
+            self.is_time_series
         )
 
     def run(self) -> bool:
@@ -583,6 +588,7 @@ class _FragmentRunner(HasEnvironment):
                 self.fragment.recompute_param_defaults()
                 try:
                     self.fragment.host_setup()
+                    self.execute_generated_module()
                     if is_kernel(self.fragment.run_once):
                         done = self.runner.run_continuous_kernel()
                         self.core.comm.close()

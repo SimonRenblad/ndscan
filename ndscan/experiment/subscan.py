@@ -51,20 +51,13 @@ class Subscan:
         self._short_child_channel_names = short_child_channel_names
         self._analyses = analyses
         self._parent_analysis_result_channels = parent_analysis_result_channels
-        # TODO(srenblad): foolproof naming
-        frag_name = ""
-        if len(self._owner._fragment_path) != 0:
-            frag_name = self._owner._fragment_path[-1]
-        self.module_name = "ndscan_generated__" + frag_name + "__" + self._fragment._fragment_path[-1] + "__subscan"
-        self.gen_mod_handler = GeneratedModuleHandler(name=self.module_name)
-
-        runner_import = f"from {self._fragment.fragment_module_name + "__scan_runner"} import Inner{self._runner.__class__.__name__}"
+        self.subscan_name = "Inner" + self.__class__.__name__
 
         # will need knowledge of the OWNED runner + fragment
-        self.gen_mod_handler.add_subscan(
-            runner_name="Inner" + self._runner.__class__.__name__,
-            subscan_name="Inner" + self.__class__.__name__,
-            runner_import=runner_import
+        self._owner.gen_mod_handler.add_subscan(
+            runner_name=self._fragment.__class__.__name__ + "Runner",
+            subscan_name=self.subscan_name,
+            fragment_module_name=self._fragment.fragment_module_name
         )
 
     def run(
@@ -116,9 +109,7 @@ class Subscan:
 
         self._spec = ScanSpec(axes, generators, options)
         self._runner.setup(self._fragment, axes, list(self._coordinate_sinks.values()))
-        generated = self.gen_mod_handler.execute_module()
-        self.inner_subscan = getattr(generated, "Inner" + self.__class__.__name__)(self.owner, self._runner)
-        self._owner.inner_fragment.init_subscan(self.inner_subscan)
+        self._runner.execute_generated_module()
         self._regenerate_points()
 
     def _regenerate_points(self):
