@@ -109,8 +109,6 @@ class Fragment(HasEnvironment):
             subfrags_imports += f"from {s.fragment_module_name} import Inner{name}\n"
             if s in self._detached_subfragments:
                 continue
-            if s._has_trivial_device_setup():
-                continue
             code += f"self.{s._fragment_path[-1]}.device_setup()\n"
         if code:
             self._all_subfragment_setup_trivial = False
@@ -124,8 +122,6 @@ class Fragment(HasEnvironment):
         for s in self._subfragments[::-1]:
             if s in self._detached_subfragments:
                 continue
-            if s._has_trivial_device_cleanup():
-                continue
             frag = "self." + s._fragment_path[-1]
             code += "try:\n"
             code += f"    {frag}.device_cleanup()\n"
@@ -136,6 +132,14 @@ class Fragment(HasEnvironment):
         else:
             self._all_subfragment_cleanup_trivial = True
             code = "pass"
+
+        cleanup_fragment = ""
+        if hasattr(self, "device_cleanup") and is_kernel(self.device_cleanup):
+            cleanup_fragment = "self.fragment.device_cleanup()"
+
+        setup_fragment = ""
+        if hasattr(self, "device_setup") and is_kernel(self.device_setup):
+            setup_fragment = "self.fragment.device_setup()"
 
         self._device_cleanup_string = textwrap.indent(code, "        ")
 
@@ -162,17 +166,9 @@ class Fragment(HasEnvironment):
             subscan_type=subscan_type,
             run_once_behavior=run_once_behavior,
             subfrags_imports=subfrags_imports,
+            setup_fragment=setup_fragment,
+            cleanup_fragment=cleanup_fragment,
         )
-
-    def _has_trivial_device_setup(self):
-        assert not self._building
-        empty_setup = self.device_setup.__func__ is Fragment.device_setup
-        return empty_setup and self._all_subfragment_setup_trivial
-
-    def _has_trivial_device_cleanup(self):
-        assert not self._building
-        empty_cleanup = self.device_cleanup.__func__ is Fragment.device_cleanup
-        return empty_cleanup and self._all_subfragment_cleanup_trivial
 
     # must be last step before compiling kernel
     def execute_generated_module(self):

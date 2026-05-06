@@ -48,12 +48,12 @@ class Inner{fragment_name}:
 
     @portable
     def device_setup(self):
-        self.fragment.device_setup()
+        {setup_fragment}
         self.device_setup_subfragments()
 
     @portable
     def device_cleanup(self):
-        self.fragment.device_cleanup()
+        {cleanup_fragment}
         self.device_cleanup_subfragments()
 
     @portable
