@@ -425,6 +425,8 @@ class GeneratedModuleHandler:
         self.backing_string += "\n\n"
         self.backing_string += r
 
-    def dump_source_code(self, filename):
+    def dump_source_code(self, filename=None):
+        if filename is None:
+            filename = self.name + ".py"
         with open(filename, "w+") as f:
             f.write(self.backing_string)
