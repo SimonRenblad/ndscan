@@ -141,6 +141,9 @@ class ScanRunner(HasEnvironment):
         """
         raise NotImplementedError
 
+    def execute_generated_module(self):
+        pass
+
 
 class ResultBatcher:
     """Intercepts all result channel sinks of the given fragment, making sure that every

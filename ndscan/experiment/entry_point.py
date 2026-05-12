@@ -588,20 +588,63 @@ class _FragmentRunner(HasEnvironment):
                 self.fragment.recompute_param_defaults()
                 try:
                     self.fragment.host_setup()
-                    self.execute_generated_module()
                     if is_kernel(self.fragment.run_once):
+                        self.execute_generated_module()
                         done = self.runner.run_continuous_kernel()
                         self.core.comm.close()
                         if done:
                             break
                     else:
-                        if self.runner._continuous_loop():
+                        if self._continuous_loop():
                             break
                 finally:
                     self.fragment.host_cleanup()
                 self.tlr.scheduler.pause()
         finally:
             self.tlr._set_completed()
+
+    # TODO(srenblad): add back print statements
+    def _continuous_loop(self):
+        try:
+            while not self.tlr.scheduler.check_pause():
+                try:
+                    self.fragment.device_setup()
+                    self.fragment.run_once()
+                    self._finish_continuous_point()
+                    if not self.tlr._continue_running:
+                        return True
+
+                    # One point is now finished, so reset transitory error counters for
+                    # the next one.
+                    self.num_transitory_errors_caught = 0
+                    self.num_underflows_caught = 0
+                except RTIOUnderflow:
+                    self.num_underflows_caught += 1
+                    if self.num_underflows_caught > self.max_rtio_underflow_retries:
+                        raise
+                except RestartKernelTransitoryError:
+                    self.num_transitory_errors_caught += 1
+                    if (self.num_transitory_errors_caught >
+                            self.max_transitory_error_retries):
+                        raise
+                    return False
+                except TransitoryError:
+                    self.num_transitory_errors_caught += 1
+                    if (self.num_transitory_errors_caught >
+                            self.max_transitory_error_retries):
+                        raise
+            return False
+        finally:
+            self.fragment.device_cleanup()
+
+    def _finish_continuous_point(self):
+        if self.tlr._is_time_series:
+            self.tlr._timestamp_sink.push(time.monotonic() - self.tlr._time_series_start)
+        else:
+            self.tlr._point_phase = not self.tlr._point_phase
+            self.tlr.set_dataset(self.tlr.dataset_prefix + "point_phase",
+                                  self.tlr._point_phase,
+                                  broadcast=True)
 
 
 def run_fragment_once(

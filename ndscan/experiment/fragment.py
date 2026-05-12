@@ -210,7 +210,6 @@ class Fragment(HasEnvironment):
                 continue
             s.host_setup()
 
-    @portable
     def device_setup(self) -> None:
         """Perform core-device-side initialisation.
 
@@ -239,7 +238,7 @@ class Fragment(HasEnvironment):
         """
         self.device_setup_subfragments()
 
-    @portable
+    # for fragments running on kernels this is handled by a generated module
     def device_setup_subfragments(self) -> None:
         """Call :meth:`device_setup` on all subfragments.
 
@@ -251,8 +250,10 @@ class Fragment(HasEnvironment):
         Only direct member function calls are special-cased to be generic on the
         `self` type.)
         """
-        # Forward to implementation generated using kernel_from_string().
-        self._device_setup_subfragments_impl(self)
+        for s in self._subfragments:
+            if s in self._detached_subfragments:
+                continue
+            s.device_setup()
 
     def host_cleanup(self):
         """Perform host-side cleanup after an experiment has been run.
@@ -287,7 +288,6 @@ class Fragment(HasEnvironment):
             except Exception:
                 logger.exception("Cleanup failed for '%s'", s._stringize_path())
 
-    @portable
     def device_cleanup(self) -> None:
         """Perform core-device-side teardown.
 
@@ -312,7 +312,7 @@ class Fragment(HasEnvironment):
         """
         self.device_cleanup_subfragments()
 
-    @portable
+    # for fragments running on kernels this is handled by a generated module
     def device_cleanup_subfragments(self) -> None:
         """Call :meth:`device_cleanup` on all subfragments.
 
@@ -333,7 +333,13 @@ class Fragment(HasEnvironment):
         to be generic on the `self` type.)
         """
         # Forward to implementation generated using kernel_from_string().
-        self._device_cleanup_subfragments_impl(self, _log_failed_cleanup)
+        for s in self._subfragments[::-1]:
+            if s in self._detached_subfragments:
+                continue
+            try:
+                s.device_cleanup()
+            except Exception:
+                logger.exception("Cleanup failed for '%s'", s._stringize_path())
 
     def build_fragment(self, *args, **kwargs) -> None:
         """Initialise this fragment, building up the hierarchy of subfragments,
