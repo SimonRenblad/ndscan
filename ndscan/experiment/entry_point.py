@@ -334,7 +334,7 @@ class TopLevelRunner(HasEnvironment):
         self._broadcast_metadata()
 
         if not self.spec.axes and not self._is_time_series:
-            runner = _FragmentRunner(
+            runner = FragmentRunner(
                 self,
                 self.fragment,
                 self.max_rtio_underflow_retries,
@@ -349,7 +349,7 @@ class TopLevelRunner(HasEnvironment):
                 self, self.dataset_prefix + "points.axis_0")
             self._coordinate_sinks = [self._timestamp_sink]
             self._time_series_start = time.monotonic()
-            runner = _FragmentRunner(
+            runner = FragmentRunner(
                 self,
                 self.fragment,
                 self.max_rtio_underflow_retries,
@@ -486,7 +486,7 @@ def make_fragment_scan_exp(
 
     return FragmentScanShim
 
-class _FragmentRunner(HasEnvironment):
+class FragmentRunner(HasEnvironment):
     """Object wrapping fragment execution to be able to execute everything in one kernel
     invocation (no difference for non-kernel fragments).
     """
@@ -669,8 +669,8 @@ def run_fragment_once(
     for channel, sink in sinks.items():
         channel.set_sink(sink)
 
-    runner = _FragmentRunner(fragment, fragment, max_rtio_underflow_retries,
-                             max_transitory_error_retries)
+    runner = FragmentRunner(fragment, fragment, max_rtio_underflow_retries,
+                            max_transitory_error_retries)
     fragment.init_params()
     fragment.prepare()
     try:
