@@ -467,7 +467,7 @@ class KernelScanRunner(ScanRunner):
         return not self._current_chunk
 
 
-def select_runner_class(fragment: ExpFragment) -> type[ScanRunner]:
+def select_runner_class(fragment: ExpFragment, is_scan=True):
     if is_kernel(fragment.run_once):
         return KernelScanRunner
     else:

@@ -11,10 +11,9 @@ from itertools import islice
 import numpy as np
 from numpy import int32, int64
 from artiq.coredevice.core import Core
-from ndscan.experiment.entry_point import FragmentRunner
+from ndscan.experiment.entry_point import KernelRunner
 from ndscan.experiment.fragment import Fragment, log_failed_cleanup
 from ndscan.experiment.scan_runner import ResultBatcher, KernelScanRunner
-from ndscan.experiment.parameters import FloatParamStore, IntParamStore, BoolParamStore
 from ndscan.experiment.result_channels import ResultChannel, FloatChannel
 from ndscan.experiment.default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
 from ndscan.experiment import (kernel, rpc, compile, Kernel, KernelInvariant, portable,
@@ -158,7 +157,7 @@ _runner_noscan_template = """
 {fragment_import}
 
 @compile
-class InnerNoScanRunner:
+class InnerKernelRunner:
     fragment: KernelInvariant[Inner{fragment_class}]
     core: KernelInvariant[Core]
     max_rtio_underflow_retries: KernelInvariant[int32]
@@ -166,7 +165,7 @@ class InnerNoScanRunner:
     num_underflows_caught: Kernel[int32]
     num_transitory_errors_caught: Kernel[int32]
     _continue_running: KernelInvariant[bool]
-    runner: KernelInvariant[FragmentRunner]
+    runner: KernelInvariant[KernelRunner]
     
     def __init__(self, runner, fragment, max_rtio_underflow_retries: int,
               max_transitory_error_retries: int,
@@ -176,7 +175,6 @@ class InnerNoScanRunner:
              ):
         self.runner = runner
         self.core = runner.core
-        self.fragment = Inner{fragment_class}(fragment)
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
         self._continue_running = continue_running
@@ -212,16 +210,8 @@ class InnerNoScanRunner:
         return True
 
     @kernel
-    def run_continuous_kernel(self) -> bool:
+    def run_continuous(self) -> bool:
         self.core.reset()
-        return self._continuous_loop()
-
-    @rpc
-    def scheduler_check_pause(self) -> bool:
-        return self.runner.scheduler.check_pause()
-
-    @portable
-    def _continuous_loop(self) -> bool:
         try:
             while not self.runner.scheduler_check_pause():
                 try:
@@ -248,7 +238,7 @@ class InnerNoScanRunner:
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
-                            self.runnr.max_transitory_error_retries):
+                            self.runner.max_transitory_error_retries):
                         raise
             return False
         finally:
@@ -256,16 +246,6 @@ class InnerNoScanRunner:
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
 
-    @rpc(flags={{"async"}})
-    def _finish_continuous_point(self):
-        f = self.runner
-        if f._is_time_series:
-            f._timestamp_sink.push(time.monotonic() - f._time_series_start)
-        else:
-            f._point_phase = not f._point_phase
-            f.set_dataset(f.dataset_prefix + "point_phase",
-                             f._point_phase,
-                             broadcast=True)
 """
 
 

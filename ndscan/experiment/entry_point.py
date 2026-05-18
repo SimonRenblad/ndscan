@@ -11,7 +11,7 @@ The two main entry points into the :class:`.ExpFragment` universe are
 """
 
 from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYONValue,
-                            rpc, TerminationRequested)
+                            rpc, TerminationRequested, compile, KernelInvariant)
 from artiq.coredevice.exceptions import RTIOUnderflow
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -39,7 +39,7 @@ from ..utils import (merge_no_duplicates, NoAxesMode, PARAMS_ARG_KEY, SCHEMA_REV
                      SCHEMA_REVISION_KEY, shorten_to_unambiguous_suffixes, strip_suffix)
 
 __all__ = [
-    "ArgumentInterface", "TopLevelRunner", "make_fragment_scan_exp",
+    "ArgumentInterface", "HostRunner", "KernelRunner", "TopLevelRunner", "make_fragment_scan_exp",
     "run_fragment_once", "create_and_run_fragment_once"
 ]
 
@@ -233,6 +233,20 @@ class ArgumentInterface(HasEnvironment):
         return spec, no_axes_mode, skip_on_persistent_transitory_error
 
 
+def select_once_runner_class(fragment: ExpFragment):
+    if is_kernel(fragment):
+        return KernelOnceRunner
+    else:
+        return HostOnceRunner
+
+
+def select_continuous_runner_class(fragment: ExpFragment):
+    if is_kernel(fragment):
+        return KernelContinuousRunner
+    else:
+        return HostContinuousRunner
+
+
 class TopLevelRunner(HasEnvironment):
     def build(self,
               fragment: ExpFragment,
@@ -334,14 +348,14 @@ class TopLevelRunner(HasEnvironment):
         self._broadcast_metadata()
 
         if not self.spec.axes and not self._is_time_series:
-            runner = FragmentRunner(
+            runner = select_continuous_runner_class(self.fragment)(
                 self,
                 self.fragment,
                 self.max_rtio_underflow_retries,
                 self.max_transitory_error_retries,
                 self._continue_running
             )
-            runner.run_continuous()
+            runner.run()
             return None, {c: s.get_last() for c, s in self._scan_result_sinks.items()}
 
         if self._is_time_series:
@@ -349,7 +363,7 @@ class TopLevelRunner(HasEnvironment):
                 self, self.dataset_prefix + "points.axis_0")
             self._coordinate_sinks = [self._timestamp_sink]
             self._time_series_start = time.monotonic()
-            runner = FragmentRunner(
+            runner = select_continuous_runner_class(self.fragment)(
                 self,
                 self.fragment,
                 self.max_rtio_underflow_retries,
@@ -357,7 +371,7 @@ class TopLevelRunner(HasEnvironment):
                 self._continue_running,
                 self._is_time_series
             )
-            runner.run_continuous()
+            runner.run()
         else:
             runner = select_runner_class(self.fragment)(
                 self,
@@ -486,64 +500,12 @@ def make_fragment_scan_exp(
 
     return FragmentScanShim
 
-class FragmentRunner(HasEnvironment):
-    """Object wrapping fragment execution to be able to execute everything in one kernel
-    invocation (no difference for non-kernel fragments).
-    """
 
-    def __init__(self, managers_or_parent, *args, **kwargs):
-        if isinstance(managers_or_parent, tuple):
-            self.tlr = self
-        else:
-            self.tlr = managers_or_parent
-        HasEnvironment.__init__(self, managers_or_parent, *args, **kwargs)
-
-    def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
-              max_transitory_error_retries: int,
-              continue_running: bool = False,
-              is_time_series: bool = False
-          ):
-        self.gen_module_handler = GeneratedModuleHandler(name=fragment.fragment_module_name + "__noscan_runner")
-        self.fragment = fragment
-        self.max_rtio_underflow_retries = max_rtio_underflow_retries
-        self.max_transitory_error_retries = max_transitory_error_retries
-        self.num_underflows_caught = 0
-        self.num_transitory_errors_caught = 0
-        self.continue_running = continue_running
-        self.is_time_series = is_time_series
-        if is_kernel(self.fragment.run_once):
-            self.setattr_device("core")
-
-        fragment_class = self.fragment.__class__.__name__
-        fragment_import = f"from {self.fragment.fragment_module_name} import Inner{fragment_class}"
-
-        self.gen_module_handler.add_noscan_runner(fragment_class=fragment_class, fragment_import=fragment_import)
-
-
-    def execute_generated_module(self):
-        self.fragment.execute_generated_module()
-        generated = self.gen_module_handler.execute_module()
-        self.runner = generated.InnerNoScanRunner(
-            self.tlr,
-            self.fragment,
-            self.max_rtio_underflow_retries,
-            self.max_transitory_error_retries,
-            self.continue_running,
-            self.is_time_series
-        )
-
-    def run(self) -> bool:
-        """Execute device_setup()/run_once(), retrying if nececssary.
-
-        :return: ``True`` if execution completed, ``False`` if it should be attempted
-            again (RestartKernelTransitoryError).
-        """
-        if is_kernel(self.fragment.run_once):
-            self.runner._run()
-        else:
-            return self._run()
-
-    def _run(self):
+class HostOnceRunner(HasEnvironment):
+    def build(self, fragment, ):
+        pass
+    
+    def run(self):
         try:
             while True:
                 try:
@@ -576,8 +538,13 @@ class FragmentRunner(HasEnvironment):
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
 
-    def run_continuous(self):
-        self.tlr._point_phase = False
+class HostContinuousRunner(HasEnvironment):
+
+    def build(self, fragment):
+        pass
+
+    def run(self):
+        self._point_phase = False
         self.num_current_transitory_errors = 0
         self.num_current_underflows = 0
         try:
@@ -588,30 +555,23 @@ class FragmentRunner(HasEnvironment):
                 self.fragment.recompute_param_defaults()
                 try:
                     self.fragment.host_setup()
-                    if is_kernel(self.fragment.run_once):
-                        self.execute_generated_module()
-                        done = self.runner.run_continuous_kernel()
-                        self.core.comm.close()
-                        if done:
-                            break
-                    else:
-                        if self._continuous_loop():
-                            break
+                    if self._continuous_loop():
+                        break
                 finally:
                     self.fragment.host_cleanup()
-                self.tlr.scheduler.pause()
+                self.scheduler.pause()
         finally:
-            self.tlr._set_completed()
+            self._set_completed()
 
     # TODO(srenblad): add back print statements
     def _continuous_loop(self):
         try:
-            while not self.tlr.scheduler.check_pause():
+            while not self.scheduler.check_pause():
                 try:
                     self.fragment.device_setup()
                     self.fragment.run_once()
                     self._finish_continuous_point()
-                    if not self.tlr._continue_running:
+                    if not self._continue_running:
                         return True
 
                     # One point is now finished, so reset transitory error counters for
@@ -638,14 +598,101 @@ class FragmentRunner(HasEnvironment):
             self.fragment.device_cleanup()
 
     def _finish_continuous_point(self):
-        if self.tlr._is_time_series:
-            self.tlr._timestamp_sink.push(time.monotonic() - self.tlr._time_series_start)
+        if self._is_time_series:
+            self._timestamp_sink.push(time.monotonic() - self._time_series_start)
         else:
-            self.tlr._point_phase = not self.tlr._point_phase
-            self.tlr.set_dataset(self.tlr.dataset_prefix + "point_phase",
-                                  self.tlr._point_phase,
-                                  broadcast=True)
+            self._point_phase = not self._point_phase
+            self.set_dataset(self.dataset_prefix + "point_phase",
+                             self._point_phase,
+                             broadcast=True)
 
+
+@compile
+class KernelOnceRunner(HasEnvironment):
+    core: KernelInvariant[Core]
+    max_rtio_underflow_retries: KernelInvariant[int32]
+    max_transitory_error_retries: KernelInvariant[int32]
+
+    def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
+              max_transitory_error_retries: int):
+        self.fragment = fragment
+        self.setattr_device("core")
+        self.gen_module_handler = GeneratedModuleHandler(name=fragment.fragment_module_name + "__noscan_runner")
+        fragment_class = self.fragment.__class__.__name__
+        fragment_import = f"from {self.fragment.fragment_module_name} import Inner{fragment_class}"
+        self.gen_module_handler.add_once_runner(
+            fragment_class=fragment_class,
+            fragment_import=fragment_import
+        )
+
+        self.max_rtio_underflow_retries = max_rtio_underflow_retries
+        self.max_transitory_error_retries = max_transitory_error_retries
+
+    def execute_generated_module(self):
+        if is_kernel(self.fragment.run_once):
+            self.fragment.execute_generated_module()
+            generated = self.gen_module_handler.execute_module()
+            self.runner = generated.InnerKernelOnceRunner(
+                self.fragment,
+                self.max_rtio_underflow_retries,
+                self.max_transitory_error_retries
+            )
+
+    # run it once from run_fragment_once
+    def run(self) -> bool:
+        return self.runner.run_once()
+
+
+@compile
+class KernelContinuousRunner(HasEnvironment):
+    core: KernelInvariant[Core]
+    max_rtio_underflow_retries: KernelInvariant[int32]
+    max_transitory_error_retries: KernelInvariant[int32]
+
+    def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
+              max_transitory_error_retries: int,
+              continue_running: bool = False,
+              is_time_series: bool = False
+             ):
+        self.fragment = fragment
+        self.setattr_device("core")
+        self.gen_module_handler = GeneratedModuleHandler(name=fragment.fragment_module_name + "__noscan_runner")
+        fragment_class = self.fragment.__class__.__name__
+        fragment_import = f"from {self.fragment.fragment_module_name} import Inner{fragment_class}"
+        self.gen_module_handler.add_continuous_runner(
+            fragment_class=fragment_class,
+            fragment_import=fragment_import
+        )
+
+        self.max_rtio_underflow_retries = max_rtio_underflow_retries
+        self.max_transitory_error_retries = max_transitory_error_retries
+        self.continue_running = continue_running
+        self.is_time_series = is_time_series
+
+    def execute_generated_module(self):
+        self.fragment.execute_generated_module()
+        generated = self.gen_module_handler.execute_module()
+        self.runner = generated.InnerKernelContinuousRunner(
+            self.fragment,
+            self.max_rtio_underflow_retries,
+            self.max_transitory_error_retries,
+            self.continue_running,
+            self.is_time_series
+        )
+
+    def run(self):
+        self.runner.run()
+
+    @rpc(flags={"async"})
+    def _finish_continuous_point(self):
+        if self._is_time_series:
+            self._timestamp_sink.push(time.monotonic() - self._time_series_start)
+        else:
+            self._point_phase = not self._point_phase
+            self.set_dataset(self.dataset_prefix + "point_phase",
+                             self._point_phase,
+                             broadcast=True)
+    
 
 def run_fragment_once(
     fragment: ExpFragment,
@@ -669,8 +716,8 @@ def run_fragment_once(
     for channel, sink in sinks.items():
         channel.set_sink(sink)
 
-    runner = FragmentRunner(fragment, fragment, max_rtio_underflow_retries,
-                            max_transitory_error_retries)
+    runner = select_once_runner_class(fragment)(fragment, max_rtio_underflow_retries,
+                                                max_transitory_error_retries)
     fragment.init_params()
     fragment.prepare()
     try:
