@@ -75,34 +75,20 @@ _RUN_CHUNK_SCAN_COMPLETE = 2
 @compile
 class {runner_name}:
     _fragment: KernelInvariant[Inner{fragment_class}]
-    _pause_check_interval_mu: Kernel[int64]
-    _last_pause_check_mu: Kernel[int64]
-    max_rtio_underflow_retries: KernelInvariant[int32]
-    max_transitory_error_retries: KernelInvariant[int32]
-    skip_on_persistent_transitory_error: KernelInvariant[bool]
     core: KernelInvariant[Core]
     runner: KernelInvariant[KernelScanRunner]
 
-    def __init__(self, runner, fragment, axes, axis_sinks, max_rtio_underflow_retries,
-                 max_transitory_error_retries,
-                 skip_on_persistent_transitory_error):
+    def __init__(self, runner, fragment):
+        self.runner = runner
         self.core = runner.core
         self.scheduler = runner.scheduler
         self._fragment = fragment.inner_fragment
 
-        self._pause_check_interval_mu = self.core.seconds_to_mu(0.2)
-        self._last_pause_check_mu = int64(0)
-        self.max_rtio_underflow_retries = int32(max_rtio_underflow_retries)
-        self.max_transitory_error_retries = int32(max_transitory_error_retries)
-        self.skip_on_persistent_transitory_error = bool(skip_on_persistent_transitory_error)
-
-        self._result_batcher = None
-
     @kernel
-    def acquire(self) -> bool:
+    def acquire(self, device_cleanup: bool) -> bool:
         self.runner._install_result_batcher()
         try:
-            self._last_pause_check_mu = self.core.get_rtio_counter_mu()
+            self.runner._last_pause_check_mu = self.core.get_rtio_counter_mu()
             while True:
                 result = self._run_chunk()
                 if result == _RUN_CHUNK_INTERRUPTED:
@@ -112,7 +98,8 @@ class {runner_name}:
                 assert result == _RUN_CHUNK_PROCEED
         finally:
             self.runner._remove_result_batcher()
-            self._fragment.device_cleanup()
+            if device_cleanup:
+                self._fragment.device_cleanup()
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
 
@@ -123,12 +110,12 @@ class {runner_name}:
         if stride == 0:
             return _RUN_CHUNK_SCAN_COMPLETE
         for i in range(stride):
-            for j in range(len(self.float_params)):
-                self.runner.float_params[j].set_from_rpc(values[0][j*stride + i])
-            for j in range(len(self.int_params)):
-                self.runner.int_params[j].set_from_rpc(values[1][j*stride + i])
-            for j in range(len(self.bool_params)):
-                self.runner.bool_params[j].set_from_rpc(values[2][j*stride + i])
+            for j in range(len(self.runner._float_stores)):
+                self.runner._float_stores[j].set_from_rpc(values[1][j*stride + i])
+            for j in range(len(self.runner._int_stores)):
+                self.runner._int_stores[j].set_from_rpc(values[2][j*stride + i])
+            for j in range(len(self.runner._bool_stores)):
+                self.runner._bool_stores[j].set_from_rpc(values[3][j*stride + i])
             if self._run_point():
                 return _RUN_CHUNK_INTERRUPTED
         return _RUN_CHUNK_PROCEED
@@ -145,7 +132,7 @@ class {runner_name}:
                 self._fragment.run_once()
                 break
             except RTIOUnderflow:
-                if num_underflows >= self.max_rtio_underflow_retries:
+                if num_underflows >= self.runner.max_rtio_underflow_retries:
                     raise
                 num_underflows += 1
                 print_rpc("Ignoring RTIOUnderflow")
@@ -155,8 +142,8 @@ class {runner_name}:
                 self.runner._retry_point()
                 return True
             except TransitoryError:
-                if num_transitory_errors >= self.max_transitory_error_retries:
-                    if self.skip_on_persistent_transitory_error:
+                if num_transitory_errors >= self.runner.max_transitory_error_retries:
+                    if self.runner.skip_on_persistent_transitory_error:
                         self.runner._skip_point()
                         return False
                     raise
@@ -190,8 +177,6 @@ class InnerNoScanRunner:
         self.runner = runner
         self.core = runner.core
         self.fragment = Inner{fragment_class}(fragment)
-        self.max_rtio_underflow_retries = max_rtio_underflow_retries
-        self.max_transitory_error_retries = max_transitory_error_retries
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
         self._continue_running = continue_running
@@ -208,18 +193,18 @@ class InnerNoScanRunner:
                     return True
                 except RTIOUnderflow:
                     self.num_underflows_caught += 1
-                    if self.num_underflows_caught > self.max_rtio_underflow_retries:
+                    if self.num_underflows_caught > self.runner.max_rtio_underflow_retries:
                         raise
                 except RestartKernelTransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
-                            self.max_transitory_error_retries):
+                            self.runner.max_transitory_error_retries):
                         raise
                     return False
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
-                            self.max_transitory_error_retries):
+                            self.runner.max_transitory_error_retries):
                         raise
         finally:
             self.fragment.device_cleanup()
@@ -257,13 +242,13 @@ class InnerNoScanRunner:
                 except RestartKernelTransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
-                            self.max_transitory_error_retries):
+                            self.runner.max_transitory_error_retries):
                         raise
                     return False
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
-                            self.max_transitory_error_retries):
+                            self.runnr.max_transitory_error_retries):
                         raise
             return False
         finally:

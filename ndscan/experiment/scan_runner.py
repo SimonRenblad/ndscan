@@ -19,6 +19,7 @@ from artiq.coredevice.core import Core
 from artiq.coredevice.exceptions import RTIOUnderflow
 from artiq.language import compile, HasEnvironment, kernel, Kernel, KernelInvariant, rpc
 
+from .generated_modules import GeneratedModuleHandler
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, RestartKernelTransitoryError, TransitoryError
 from .parameters import ParamStore, FloatParamStore, IntParamStore, BoolParamStore
@@ -126,10 +127,10 @@ class ScanRunner(HasEnvironment):
 
                 # we still need to wrap the runner to get correct type annotations
                 # for generated fragment wrappers
-                self.execute_generated_modules()
+                self.execute_generated_module()
 
                 # For on-core-device scans, we'll spawn a kernel here.
-                if self.acquire(device_cleanup=True):
+                if self.acquire(True):
                     return
             finally:
                 fragment.host_cleanup()
@@ -324,6 +325,17 @@ class KernelScanRunner(ScanRunner):
         # TODO(srenblad): still need some templating due to polymorphism issue
         self.template = GeneratedModuleHandler()
 
+        fragment_class_name = self._fragment.__class__.__name__
+        self.runner_name = fragment_class_name + "Runner"
+
+        fragment_import = f"from {self._fragment.fragment_module_name} import Inner{fragment_class_name}"
+
+        self.template.add_runner(
+            runner_name=self.runner_name,
+            fragment_class=fragment_class_name,
+            fragment_import=fragment_import
+        )
+
     def set_points(self, points: Iterator[tuple]) -> None:
         self._points = points
         # Stash away points in current kernel chunk until they have been marked
@@ -351,98 +363,11 @@ class KernelScanRunner(ScanRunner):
         self._result_batcher.remove()
         self._result_batcher = None
 
-    @kernel
     def acquire(self, device_cleanup: bool) -> bool:
-        self._install_result_batcher()
-        try:
-            self._last_pause_check_mu = self.core.get_rtio_counter_mu()
-            while True:
-                # Fetch chunk in separate function to make sure stack memory is released
-                # every time. (The ARTIQ compiler effectively uses alloca() to provision
-                # memory for RPC return values.)
-                result = self._run_chunk(self)
-                if result == _RUN_CHUNK_INTERRUPTED:
-                    return False
-                if result == _RUN_CHUNK_SCAN_COMPLETE:
-                    return True
-                assert result == _RUN_CHUNK_PROCEED
-        finally:
-            self._remove_result_batcher()
-            if device_cleanup:
-                self._fragment.device_cleanup()
-        assert False, "Execution never reaches here, return is just to pacify compiler."
-        return True
-
-    @kernel
-    def _run_chunk(self) -> int32:
-        values = self._get_param_values_chunk()
-        stride = values[0]
-        if stride == 0:
-            return _RUN_CHUNK_SCAN_COMPLETE
-        for i in range(stride):
-            for j in range(len(self.float_params)):
-                self.float_params[j].set_from_rpc(values[0][j*stride + i])
-            for j in range(len(self.int_params)):
-                self.int_params[j].set_from_rpc(values[1][j*stride + i])
-            for j in range(len(self.bool_params)):            
-                self.bool_params[j].set_from_rpc(values[2][j*stride + i])
-            if self._run_point():
-                return _RUN_CHUNK_INTERRUPTED
-        return _RUN_CHUNK_PROCEED
-
-    # TODO(srenblad): fix print rpcs
-    @kernel
-    def _run_point(self) -> bool:
-        """Execute the fragment for a single point (with the currently set parameters).
-
-        :return: Whether the kernel should be exited/experiment should be paused before
-            continuing (``True`` to pause, ``False`` to continue immediately).
-        """
-        num_underflows = 0
-        num_transitory_errors = 0
-        while True:
-            if self._should_pause():
-                return True
-            try:
-                self._fragment.device_setup()
-                self._fragment.run_once()
-                break
-            except RTIOUnderflow:
-                if num_underflows >= self.max_rtio_underflow_retries:
-                    raise
-                num_underflows += 1
-                # print(
-                #     "Ignoring RTIOUnderflow (",
-                #     num_underflows,
-                #     "/",
-                #     self.max_rtio_underflow_retries,
-                #     ")",
-                # )
-                self._retry_point()
-            except RestartKernelTransitoryError:
-                # print("Caught transitory error, restarting kernel")
-                self._retry_point()
-                return True
-            except TransitoryError:
-                if num_transitory_errors >= self.max_transitory_error_retries:
-                    if self.skip_on_persistent_transitory_error:
-                        self._skip_point()
-                        return False
-                    raise
-                num_transitory_errors += 1
-                # print(
-                #     "Caught transitory error (",
-                #     num_transitory_errors,
-                #     "/",
-                #     self.max_transitory_error_retries,
-                #     "), retrying",
-                # )
-                self._retry_point()
-        self._point_completed()
-        return False
+        self._internal_runner.acquire(device_cleanup)
 
     @rpc
-    def scheduler_check_pause(self):
+    def scheduler_check_pause(self) -> bool:
         return self.scheduler.check_pause()
 
     @kernel
