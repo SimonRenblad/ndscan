@@ -8,7 +8,7 @@ import textwrap
 from string import Template
 import os
 
-from .generated_modules import GeneratedModuleHandler
+from .generated_modules import get_module_handler
 from .default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
 from .parameters import ParamHandle, ParamStore, ParamBase
 from .result_channels import ResultChannel, FloatChannel
@@ -47,7 +47,8 @@ class Fragment(HasEnvironment):
         self.fragment_module_name = "ndscan_generated"
         for s in fragment_path:
             self.fragment_module_name += "__" + s
-        self.gen_mod_handler = GeneratedModuleHandler(name=self.fragment_module_name)
+        self.setattr_device("scheduler")
+        self.gen_mod_handler = get_module_handler(self.scheduler.rid)
 
         self._fragment_path = fragment_path
         self._subfragments = []
@@ -100,13 +101,11 @@ class Fragment(HasEnvironment):
         # Now that we know all subfragments, synthesise code for device_setup() and
         # device_cleanup() to forward to subfragments.
         subfrags_types = ""
-        subfrags_imports = ""
         code = ""
         for s in self._subfragments:
             name = s.__class__.__name__
             fname = s._fragment_path[-1]
             subfrags_types += f"    {fname}: Kernel[Inner{name}]\n"
-            subfrags_imports += f"from {s.fragment_module_name} import Inner{name}\n"
             if s in self._detached_subfragments:
                 continue
             code += f"self.{s._fragment_path[-1]}.device_setup()\n"
@@ -165,20 +164,18 @@ class Fragment(HasEnvironment):
             subfrags_types=subfrags_types,
             subscan_type=subscan_type,
             run_once_behavior=run_once_behavior,
-            subfrags_imports=subfrags_imports,
             setup_fragment=setup_fragment,
             cleanup_fragment=cleanup_fragment,
         )
 
     # must be last step before compiling kernel
-    def execute_generated_module(self):
+    def use_generated_module(self, module):
         for s in self._subfragments:
             if s not in self._detached_subfragments:
-                s.execute_generated_module()
-        generated = self.gen_mod_handler.execute_module()
+                s.use_generated_module(module)
         if self._subscan is not None:
-            self.inner_subscan = getattr(generated, self._subscan.subscan_name)
-        self.inner_fragment = getattr(generated, "Inner" + self.fragment_name)(self)
+            self.inner_subscan = getattr(module, self._subscan.subscan_name)
+        self.inner_fragment = getattr(module, "Inner" + self.fragment_name)(self)
 
     def host_setup(self):
         """Perform host-side initialisation.

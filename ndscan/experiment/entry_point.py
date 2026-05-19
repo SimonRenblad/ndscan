@@ -10,9 +10,7 @@ The two main entry points into the :class:`.ExpFragment` universe are
    :meth:`run_fragment_once` or :meth:`create_and_run_fragment_once`.
 """
 
-from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYONValue,
-                            rpc, TerminationRequested, compile, KernelInvariant)
-from artiq.coredevice.exceptions import RTIOUnderflow
+
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from contextlib import suppress
@@ -24,7 +22,14 @@ import os
 from typing import Any
 from string import Template
 
-from .generated_modules import GeneratedModuleHandler
+from numpy import int32
+
+from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYONValue,
+                            rpc, TerminationRequested, compile, KernelInvariant)
+from artiq.coredevice.core import Core
+from artiq.coredevice.exceptions import RTIOUnderflow
+
+from .generated_modules import get_module_handler
 from .default_analysis import AnnotationContext
 from .fragment import (ExpFragment, Fragment, RestartKernelTransitoryError,
                        TransitoryError)
@@ -39,8 +44,9 @@ from ..utils import (merge_no_duplicates, NoAxesMode, PARAMS_ARG_KEY, SCHEMA_REV
                      SCHEMA_REVISION_KEY, shorten_to_unambiguous_suffixes, strip_suffix)
 
 __all__ = [
-    "ArgumentInterface", "HostRunner", "KernelRunner", "TopLevelRunner", "make_fragment_scan_exp",
-    "run_fragment_once", "create_and_run_fragment_once"
+    "ArgumentInterface", "HostOnceRunner", "HostContinuousRunner",
+    "KernelOnceRunner", "KernelContinuousRunner", "TopLevelRunner",
+    "make_fragment_scan_exp", "run_fragment_once", "create_and_run_fragment_once"
 ]
 
 # Hack: Only export FragmentScanExperiment when imported from Sphinx autodoc, so
@@ -617,26 +623,24 @@ class KernelOnceRunner(HasEnvironment):
               max_transitory_error_retries: int):
         self.fragment = fragment
         self.setattr_device("core")
-        self.gen_module_handler = GeneratedModuleHandler(name=fragment.fragment_module_name + "__noscan_runner")
+        self.setattr_device("scheduler")
+        self.gen_module_handler = get_module_handler(self.scheduler.rid)
         fragment_class = self.fragment.__class__.__name__
-        fragment_import = f"from {self.fragment.fragment_module_name} import Inner{fragment_class}"
         self.gen_module_handler.add_once_runner(
             fragment_class=fragment_class,
-            fragment_import=fragment_import
         )
 
         self.max_rtio_underflow_retries = max_rtio_underflow_retries
         self.max_transitory_error_retries = max_transitory_error_retries
 
     def execute_generated_module(self):
-        if is_kernel(self.fragment.run_once):
-            self.fragment.execute_generated_module()
-            generated = self.gen_module_handler.execute_module()
-            self.runner = generated.InnerKernelOnceRunner(
-                self.fragment,
-                self.max_rtio_underflow_retries,
-                self.max_transitory_error_retries
-            )
+        module = self.gen_module_handler.execute_module()
+        self.fragment.use_generated_module(module)
+        self.runner = module.InnerKernelOnceRunner(
+            self.fragment,
+            self.max_rtio_underflow_retries,
+            self.max_transitory_error_retries
+        )
 
     # run it once from run_fragment_once
     def run(self) -> bool:
@@ -656,12 +660,11 @@ class KernelContinuousRunner(HasEnvironment):
              ):
         self.fragment = fragment
         self.setattr_device("core")
-        self.gen_module_handler = GeneratedModuleHandler(name=fragment.fragment_module_name + "__noscan_runner")
+        self.setattr_device("scheduler")
+        self.gen_module_handler = get_module_handler(self.scheduler.rid)
         fragment_class = self.fragment.__class__.__name__
-        fragment_import = f"from {self.fragment.fragment_module_name} import Inner{fragment_class}"
         self.gen_module_handler.add_continuous_runner(
             fragment_class=fragment_class,
-            fragment_import=fragment_import
         )
 
         self.max_rtio_underflow_retries = max_rtio_underflow_retries

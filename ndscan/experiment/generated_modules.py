@@ -11,7 +11,7 @@ from itertools import islice
 import numpy as np
 from numpy import int32, int64
 from artiq.coredevice.core import Core
-from ndscan.experiment.entry_point import KernelRunner
+from ndscan.experiment.entry_point import KernelContinuousRunner, KernelOnceRunner
 from ndscan.experiment.fragment import Fragment, log_failed_cleanup
 from ndscan.experiment.scan_runner import ResultBatcher, KernelScanRunner
 from ndscan.experiment.result_channels import ResultChannel, FloatChannel
@@ -25,7 +25,6 @@ from ndscan.experiment import (kernel, rpc, compile, Kernel, KernelInvariant, po
 
 _fragment_template = """
 from {fragment_module} import {fragment_name}
-{subfrags_imports}
 
 @compile
 class Inner{fragment_name}:
@@ -65,8 +64,6 @@ class Inner{fragment_name}:
 
 
 _runner_template = """
-{fragment_import}
-
 _RUN_CHUNK_PROCEED = 0
 _RUN_CHUNK_INTERRUPTED = 1
 _RUN_CHUNK_SCAN_COMPLETE = 2
@@ -153,36 +150,78 @@ class {runner_name}:
         return False
 """
 
-_runner_noscan_template = """
-{fragment_import}
-
+_continuous_runner_template = """
 @compile
-class InnerKernelRunner:
+class InnerKernelContinuousRunner:
     fragment: KernelInvariant[Inner{fragment_class}]
-    core: KernelInvariant[Core]
-    max_rtio_underflow_retries: KernelInvariant[int32]
-    max_transitory_error_retries: KernelInvariant[int32]
+    runner: KernelInvariant[KernelContinuousRunner]
     num_underflows_caught: Kernel[int32]
     num_transitory_errors_caught: Kernel[int32]
     _continue_running: KernelInvariant[bool]
-    runner: KernelInvariant[KernelRunner]
     
-    def __init__(self, runner, fragment, max_rtio_underflow_retries: int,
-              max_transitory_error_retries: int,
-              skip_on_persistent_transitory_error: bool,
-              continue_running: bool = False,
-              is_time_series: bool = False
-             ):
+    def __init__(self, runner, fragment, continue_running):
         self.runner = runner
-        self.core = runner.core
+        self.fragment = fragment
+        self._continue_running = continue_running
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
-        self._continue_running = continue_running
 
     # TODO(srenblad): add back print statements
-    # TODO(srenblad): cut down template to bare necessary
     @kernel
-    def _run(self) -> bool:
+    def run(self) -> bool:
+        self.runner.core.reset()
+        try:
+            while not self.runner.scheduler_check_pause():
+                try:
+                    self.fragment.device_setup()
+                    self.fragment.run_once()
+                    self.runner._finish_continuous_point()
+                    if not self._continue_running:
+                        return True
+
+                    # One point is now finished, so reset transitory error counters for
+                    # the next one.
+                    self.num_transitory_errors_caught = 0
+                    self.num_underflows_caught = 0
+                except RTIOUnderflow:
+                    self.num_underflows_caught += 1
+                    if self.num_underflows_caught > self.runner.max_rtio_underflow_retries:
+                        raise
+                except RestartKernelTransitoryError:
+                    self.num_transitory_errors_caught += 1
+                    if (self.num_transitory_errors_caught >
+                            self.runner.max_transitory_error_retries):
+                        raise
+                    return False
+                except TransitoryError:
+                    self.num_transitory_errors_caught += 1
+                    if (self.num_transitory_errors_caught >
+                            self.runner.max_transitory_error_retries):
+                        raise
+            return False
+        finally:
+            self.fragment.device_cleanup()
+        assert False, "Execution never reaches here, return is just to pacify compiler."
+        return True
+
+"""
+
+_once_runner_template = """
+@compile
+class InnerKernelOnceRunner:
+    fragment: KernelInvariant[Inner{fragment_class}]
+    num_underflows_caught: Kernel[int32]
+    num_transitory_errors_caught: Kernel[int32]
+
+    def __init__(self, runner, fragment):
+        self.runner = runner
+        self.fragment = fragment
+        self.num_underflows_caught = 0
+        self.num_transitory_errors_caught = 0
+
+    # TODO(srenblad): add back print statements
+    @kernel
+    def run(self) -> bool:
         try:
             while True:
                 try:
@@ -208,52 +247,11 @@ class InnerKernelRunner:
             self.fragment.device_cleanup()
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
-
-    @kernel
-    def run_continuous(self) -> bool:
-        self.core.reset()
-        try:
-            while not self.runner.scheduler_check_pause():
-                try:
-                    self.fragment.device_setup()
-                    self.fragment.run_once()
-                    self.runner._finish_continuous_point()
-                    if not self._continue_running:
-                        return True
-
-                    # One point is now finished, so reset transitory error counters for
-                    # the next one.
-                    self.num_transitory_errors_caught = 0
-                    self.num_underflows_caught = 0
-                except RTIOUnderflow:
-                    self.num_underflows_caught += 1
-                    if self.num_underflows_caught > self.max_rtio_underflow_retries:
-                        raise
-                except RestartKernelTransitoryError:
-                    self.num_transitory_errors_caught += 1
-                    if (self.num_transitory_errors_caught >
-                            self.runner.max_transitory_error_retries):
-                        raise
-                    return False
-                except TransitoryError:
-                    self.num_transitory_errors_caught += 1
-                    if (self.num_transitory_errors_caught >
-                            self.runner.max_transitory_error_retries):
-                        raise
-            return False
-        finally:
-            self.fragment.device_cleanup()
-        assert False, "Execution never reaches here, return is just to pacify compiler."
-        return True
-
 """
-
 
 # should be appended to the OWNER fragment
 # TODO(srenblad): ensure this works for nested continuous / run once runners asw?
 _subscan_template = """
-from {fragment_module_name}__scan_runner import {runner_name}
-
 @compile
 class {subscan_name}:
     runner: KernelInvariant[{runner_name}]
@@ -274,20 +272,28 @@ class {subscan_name}:
         self.owner._regenerate_points()
 """
 
+# we use scheduler rid to allow for experiment pipeline
+_GENERATED_STORE = {}
+
+
+def get_module_handler(rid):
+    if rid not in _GENERATED_STORE:
+        _GENERATED_STORE[rid] = GeneratedModuleHandler(rid)
+    return _GENERATED_STORE[rid]
+
 
 class GeneratedModuleHandler:
-    def __init__(self, name="ndscan__generated"):
+    def __init__(self, rid, name="ndscan__generated"):
+        self.name = name + f"_{rid}"
+        self.rid = rid
         self.backing_string = _header_imports.format()
-        self.module = None
-        self.name = name
 
     def execute_module(self):
         loader = StringLoader(self.name, self.backing_string)
-        self.module = load_with_loader(self.name, loader)
-        return self.module
-
-    def import_module(self):
-        return self.module
+        module = load_with_loader(self.name, loader)
+        # executing module, remove from store
+        _GENERATED_STORE[self.rid] = None
+        return module
 
     def add_fragment(self, *args, **kwargs):
         f = _fragment_template.format(*args, **kwargs)
@@ -304,8 +310,13 @@ class GeneratedModuleHandler:
         self.backing_string += "\n\n"
         self.backing_string += s
 
-    def add_noscan_runner(self, *args, **kwargs):
-        r = _runner_noscan_template.format(*args, **kwargs)
+    def add_once_runner(self, *args, **kwargs):
+        r = _once_runner_template.format(*args, **kwargs)
+        self.backing_string += "\n\n"
+        self.backing_string += r
+
+    def add_continuous_runner(self, *args, **kwargs):
+        r = _continuous_runner_template.format(*args, **kwargs)
         self.backing_string += "\n\n"
         self.backing_string += r
 

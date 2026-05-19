@@ -19,7 +19,7 @@ from artiq.coredevice.core import Core
 from artiq.coredevice.exceptions import RTIOUnderflow
 from artiq.language import compile, HasEnvironment, kernel, Kernel, KernelInvariant, rpc
 
-from .generated_modules import GeneratedModuleHandler
+from .generated_modules import get_module_handler
 from .default_analysis import AnnotationContext, DefaultAnalysis
 from .fragment import ExpFragment, RestartKernelTransitoryError, TransitoryError
 from .parameters import ParamStore, FloatParamStore, IntParamStore, BoolParamStore
@@ -323,17 +323,15 @@ class KernelScanRunner(ScanRunner):
         self._result_batcher: ResultBatcher | None = None
 
         # TODO(srenblad): still need some templating due to polymorphism issue
-        self.template = GeneratedModuleHandler()
+        self.setattr_device("scheduler")
+        self.template = get_module_handler(self.scheduler.rid)
 
         fragment_class_name = self._fragment.__class__.__name__
         self.runner_name = fragment_class_name + "Runner"
 
-        fragment_import = f"from {self._fragment.fragment_module_name} import Inner{fragment_class_name}"
-
         self.template.add_runner(
             runner_name=self.runner_name,
             fragment_class=fragment_class_name,
-            fragment_import=fragment_import
         )
 
     def set_points(self, points: Iterator[tuple]) -> None:
@@ -346,9 +344,9 @@ class KernelScanRunner(ScanRunner):
     # must be called either by subscans or right before compilation for the top level runner
     def execute_generated_module(self):
         # runner imports the scanned fragment
-        self._fragment.execute_generated_module()
-        generated = self.template.execute_module()
-        self._internal_runner = getattr(generated, self.runner_name)(
+        module = self.template.execute_module()
+        self._fragment.use_generated_module(module)
+        self._internal_runner = getattr(module, self.runner_name)(
             self,
             self._fragment,
         )
