@@ -572,7 +572,6 @@ class HostContinuousRunner(HasEnvironment):
                 self.scheduler.pause()
         finally:
             self._set_completed()
-
     # TODO(srenblad): add back print statements
     def _continuous_loop(self):
         try:
@@ -677,18 +676,37 @@ class KernelContinuousRunner(HasEnvironment):
         self.is_time_series = is_time_series
 
     def execute_generated_module(self):
-        self.fragment.execute_generated_module()
-        generated = self.gen_module_handler.execute_module()
-        self.runner = generated.InnerKernelContinuousRunner(
+        module = self.gen_module_handler.execute_module()
+        self.fragment.use_generated_module(module)
+        self.runner = module.InnerKernelContinuousRunner(
+            self,
             self.fragment,
-            self.max_rtio_underflow_retries,
-            self.max_transitory_error_retries,
             self.continue_running,
-            self.is_time_series
         )
 
     def run(self):
-        self.runner.run()
+        self._point_phase = False
+        self.num_current_transitory_errors = 0
+        self.num_current_underflows = 0
+        try:
+            while True:
+                # After every pause(), pull in dataset changes (immediately as well to
+                # catch changes between the time the experiment is prepared and when it
+                # is run, to keep the semantics uniform).
+                self.fragment.recompute_param_defaults()
+                try:
+                    self.fragment.host_setup()
+                    self.execute_generated_module()
+                    if self.runner.run():
+                        break
+                finally:
+                    self.fragment.host_cleanup()
+                self.scheduler.pause()
+        finally:
+            self._set_completed()
+
+    def _set_completed(self):
+        self.set_dataset(self.dataset_prefix + "completed", True, broadcast=True)
 
     @rpc(flags={"async"})
     def _finish_continuous_point(self):

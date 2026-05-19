@@ -153,6 +153,7 @@ class {runner_name}:
 _continuous_runner_template = """
 @compile
 class InnerKernelContinuousRunner:
+    core: KernelInvariant[Core]
     fragment: KernelInvariant[Inner{fragment_class}]
     runner: KernelInvariant[KernelContinuousRunner]
     num_underflows_caught: Kernel[int32]
@@ -162,6 +163,7 @@ class InnerKernelContinuousRunner:
     def __init__(self, runner, fragment, continue_running):
         self.runner = runner
         self.fragment = fragment
+        self.core = runner.core
         self._continue_running = continue_running
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
