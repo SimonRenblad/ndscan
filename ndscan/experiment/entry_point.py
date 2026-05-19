@@ -240,14 +240,14 @@ class ArgumentInterface(HasEnvironment):
 
 
 def select_once_runner_class(fragment: ExpFragment):
-    if is_kernel(fragment):
+    if is_kernel(fragment.run_once):
         return KernelOnceRunner
     else:
         return HostOnceRunner
 
 
 def select_continuous_runner_class(fragment: ExpFragment):
-    if is_kernel(fragment):
+    if is_kernel(fragment.run_once):
         return KernelContinuousRunner
     else:
         return HostContinuousRunner
@@ -544,9 +544,13 @@ class HostOnceRunner(HasEnvironment):
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
 
-class HostContinuousRunner(HasEnvironment):
 
-    def build(self, fragment):
+class HostContinuousRunner(HasEnvironment):
+    def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
+              max_transitory_error_retries: int,
+              continue_running: bool = False,
+              is_time_series: bool = False
+             ):
         pass
 
     def run(self):
