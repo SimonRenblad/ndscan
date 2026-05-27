@@ -708,6 +708,10 @@ class KernelContinuousRunner(HasEnvironment):
     def _set_completed(self):
         self.set_dataset(self.dataset_prefix + "completed", True, broadcast=True)
 
+    @rpc
+    def scheduler_check_pause(self) -> bool:
+        return self.scheduler.check_pause()
+
     @rpc(flags={"async"})
     def _finish_continuous_point(self):
         if self._is_time_series:

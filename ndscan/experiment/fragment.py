@@ -48,7 +48,8 @@ class Fragment(HasEnvironment):
         for s in fragment_path:
             self.fragment_module_name += "__" + s
         self.setattr_device("scheduler")
-        self.gen_mod_handler = get_module_handler(self.scheduler.rid)
+        rid = getattr(self.scheduler, "rid", None)
+        self.gen_mod_handler = get_module_handler(rid)
 
         self._fragment_path = fragment_path
         self._subfragments = []

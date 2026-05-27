@@ -279,9 +279,29 @@ _GENERATED_STORE = {}
 
 
 def get_module_handler(rid):
+    if rid is None:
+        return DummyHandler()
     if rid not in _GENERATED_STORE:
         _GENERATED_STORE[rid] = GeneratedModuleHandler(rid)
     return _GENERATED_STORE[rid]
+
+
+# no need to create templates during repo scans
+class DummyHandler:
+    def add_fragment(self, *args, **kwargs):
+        pass
+
+    def add_runner(self, *args, **kwargs):
+        pass
+
+    def add_subscan(self, *args, **kwargs):
+        pass
+
+    def add_once_runner(self, *args, **kwargs):
+        pass
+
+    def add_continuous_runner(self, *args, **kwargs):
+        pass
 
 
 class GeneratedModuleHandler:
