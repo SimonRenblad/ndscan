@@ -10,15 +10,16 @@ import logging
 from itertools import islice
 import numpy as np
 from numpy import int32, int64
+from artiq.language import kernel, compile
 from artiq.coredevice.core import Core
 from ndscan.experiment.entry_point import KernelContinuousRunner, KernelOnceRunner
 from ndscan.experiment.fragment import Fragment, log_failed_cleanup
 from ndscan.experiment.scan_runner import ResultBatcher, KernelScanRunner
 from ndscan.experiment.result_channels import ResultChannel, FloatChannel
-from ndscan.experiment.default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
-from ndscan.experiment import (kernel, rpc, compile, Kernel, KernelInvariant, portable,
+from ndscan.experiment import (rpc, Kernel, KernelInvariant, portable,
                                RTIOUnderflow, print_rpc, RestartKernelTransitoryError,
                                TransitoryError)
+
 
 """
 
@@ -81,7 +82,7 @@ class {runner_name}:
         self._fragment = fragment.inner_fragment
 
     @kernel
-    def acquire(self, device_cleanup: bool) -> bool:
+    def acquire(self) -> bool:
         self.runner._install_result_batcher()
         try:
             self.runner._last_pause_check_mu = self.core.get_rtio_counter_mu()
@@ -94,8 +95,7 @@ class {runner_name}:
                 assert result == _RUN_CHUNK_PROCEED
         finally:
             self.runner._remove_result_batcher()
-            if device_cleanup:
-                self._fragment.device_cleanup()
+            self._fragment.device_cleanup()
         assert False, "Execution never reaches here, return is just to pacify compiler."
         return True
 
@@ -159,10 +159,10 @@ class InnerKernelContinuousRunner:
     num_underflows_caught: Kernel[int32]
     num_transitory_errors_caught: Kernel[int32]
     _continue_running: KernelInvariant[bool]
-    
+
     def __init__(self, runner, fragment, continue_running):
         self.runner = runner
-        self.fragment = fragment
+        self.fragment = fragment.inner_fragment
         self.core = runner.core
         self._continue_running = continue_running
         self.num_underflows_caught = 0
