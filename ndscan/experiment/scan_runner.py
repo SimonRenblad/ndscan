@@ -130,7 +130,7 @@ class ScanRunner(HasEnvironment):
                 self.execute_generated_module()
 
                 # For on-core-device scans, we'll spawn a kernel here.
-                if self.acquire(True):
+                if self.acquire():
                     return
             finally:
                 fragment.host_cleanup()
@@ -148,11 +148,8 @@ class ScanRunner(HasEnvironment):
     def set_points(self, points: Iterator[tuple]) -> None:
         raise NotImplementedError
 
-    def acquire(self, device_cleanup: bool) -> bool:
+    def acquire(self) -> bool:
         """
-        :param device_cleanup: Whether to execute :meth:`.ExpFragment.device_cleanup` at
-            the end of the scan (e.g. for use in subscans which may not actually leave
-            the device).
         :return: ``true`` if scan is complete, ``false`` if the scan has been
             interrupted and ``acquire()`` should be called again to complete it.
         """
@@ -361,8 +358,8 @@ class KernelScanRunner(ScanRunner):
         self._result_batcher.remove()
         self._result_batcher = None
 
-    def acquire(self, device_cleanup: bool) -> bool:
-        self._internal_runner.acquire(device_cleanup)
+    def acquire(self) -> bool:
+        return self._internal_runner.acquire()
 
     @rpc
     def scheduler_check_pause(self) -> bool:
