@@ -8,7 +8,6 @@ import textwrap
 from string import Template
 import os
 
-from .generated_modules import get_module_handler
 from .default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
 from .parameters import ParamHandle, ParamStore, ParamBase
 from .result_channels import ResultChannel, FloatChannel
@@ -44,13 +43,6 @@ class Fragment(HasEnvironment):
         :param args: Arguments to be forwarded to :meth:`build_fragment`.
         :param kwargs: Keyword arguments to be forwarded to :meth:`build_fragment`.
         """
-        self.fragment_module_name = "ndscan_generated"
-        for s in fragment_path:
-            self.fragment_module_name += "__" + s
-        self.setattr_device("scheduler")
-        rid = getattr(self.scheduler, "rid", None)
-        self.gen_mod_handler = get_module_handler(rid)
-
         self._fragment_path = fragment_path
         self._subfragments = []
 
@@ -78,6 +70,7 @@ class Fragment(HasEnvironment):
 
         klass = self.__class__
         mod = klass.__module__
+        self.fragment_name = klass.__name__
         # KLUDGE: Strip prefix added by file_import() to make path matches compatible
         # across dashboard/artiq_run and the worker running the experiment. Should be
         # fixed at the source.
@@ -96,17 +89,14 @@ class Fragment(HasEnvironment):
         self.build_fragment(*args, **kwargs)
         self._building = False
 
-        param_str = ""
-        for key, param in self._free_params.items():
-            param_str += f"{key}: Kernel[{param.CompilerType}]\n"
         # Now that we know all subfragments, synthesise code for device_setup() and
         # device_cleanup() to forward to subfragments.
-        subfrags_types = ""
+        self.subfrags_types = ""
         code = ""
         for s in self._subfragments:
             name = s.__class__.__name__
             fname = s._fragment_path[-1]
-            subfrags_types += f"    {fname}: Kernel[Inner{name}]\n"
+            self.subfrags_types += f"    {fname}: Kernel[Inner{name}]\n"
             if s in self._detached_subfragments:
                 continue
             code += f"self.{s._fragment_path[-1]}.device_setup()\n"
@@ -133,41 +123,49 @@ class Fragment(HasEnvironment):
             self._all_subfragment_cleanup_trivial = True
             code = "pass"
 
-        cleanup_fragment = ""
+        self.cleanup_fragment = ""
         if hasattr(self, "device_cleanup") and is_kernel(self.device_cleanup):
-            cleanup_fragment = "self.fragment.device_cleanup()"
+            self.cleanup_fragment = "self.fragment.device_cleanup()"
 
-        setup_fragment = ""
+        self.setup_fragment = ""
         if hasattr(self, "device_setup") and is_kernel(self.device_setup):
-            setup_fragment = "self.fragment.device_setup()"
+            self.setup_fragment = "self.fragment.device_setup()"
 
         self._device_cleanup_string = textwrap.indent(code, "        ")
 
-        subscan_type = ""
-        run_once_behavior = ""
+        self.subscan_type = ""
+        self.run_once_behavior = ""
         if self._subscan is not None:
-            subscan_frag_name = self._subscan._fragment.__class__.__name__
-            subscan_name = subscan_frag_name + "Subscan"
-            run_once_behavior = "self.subscan.acquire()"
-            subscan_type = f"subscan: KernelInvariant[{subscan_name}]"
+            self.subscan_frag_name = self._subscan._fragment.__class__.__name__
+            self.subscan_name = self.subscan_frag_name + "Subscan"
+            self.run_once_behavior = "self.subscan.acquire()"
+            self.subscan_type = f"subscan: KernelInvariant[{self.subscan_name}]"
         else:
-            run_once_behavior="self.fragment.run_once()"
+            self.run_once_behavior="self.fragment.run_once()"
 
-        self.fragment_name = klass.__name__
-        self.inner_subscan = None
-        self.inner_fragment = None
-
-        self.gen_mod_handler.add_fragment(
+    def build_generated(self, handler):
+        for s in self._subfragments:
+            if s not in self._detached_subfragments:
+                s.build_generated(handler)
+        handler.add_fragment(
             device_cleanup=self._device_cleanup_string,
             device_setup=self._device_setup_string,
             fragment_name=self.fragment_name,
             fragment_module=klass.__module__,
-            subfrags_types=subfrags_types,
-            subscan_type=subscan_type,
-            run_once_behavior=run_once_behavior,
-            setup_fragment=setup_fragment,
-            cleanup_fragment=cleanup_fragment,
+            subfrags_types=self.subfrags_types,
+            subscan_type=self.subscan_type,
+            run_once_behavior=self.run_once_behavior,
+            setup_fragment=self.setup_fragment,
+            cleanup_fragment=self.cleanup_fragment,
         )
+        if self._subscan is not None:
+            self._subscan.fragment.build_generated(handler)
+            self._subscan.runner.build_generated(handler)
+            # will need knowledge of the OWNED runner + fragment
+            handler.add_subscan(
+                runner_name=self.subscan.runner_name,
+                subscan_name=self.subscan.subscan_name,
+            )
 
     # must be last step before compiling kernel
     def use_generated_module(self, module):

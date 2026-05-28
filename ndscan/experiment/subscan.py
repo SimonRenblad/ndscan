@@ -51,13 +51,7 @@ class Subscan:
         self._analyses = analyses
         self._parent_analysis_result_channels = parent_analysis_result_channels
         self.subscan_name = self._fragment.__class__.__name__ + "Subscan"
-
-        # will need knowledge of the OWNED runner + fragment
-        self._owner.gen_mod_handler.add_subscan(
-            runner_name=self._fragment.__class__.__name__ + "Runner",
-            subscan_name=self.subscan_name,
-            fragment_module_name=self._fragment.fragment_module_name
-        )
+        self.runner_name = self._fragment.__class__.__name__ + "Runner"
 
     def run(
         self,

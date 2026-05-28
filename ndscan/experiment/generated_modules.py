@@ -274,47 +274,15 @@ class {subscan_name}:
         self.owner._regenerate_points()
 """
 
-# we use scheduler rid to allow for experiment pipeline
-_GENERATED_STORE = {}
-
-
-def get_module_handler(rid):
-    if rid is None:
-        return DummyHandler()
-    if rid not in _GENERATED_STORE:
-        _GENERATED_STORE[rid] = GeneratedModuleHandler(rid)
-    return _GENERATED_STORE[rid]
-
-
-# no need to create templates during repo scans
-class DummyHandler:
-    def add_fragment(self, *args, **kwargs):
-        pass
-
-    def add_runner(self, *args, **kwargs):
-        pass
-
-    def add_subscan(self, *args, **kwargs):
-        pass
-
-    def add_once_runner(self, *args, **kwargs):
-        pass
-
-    def add_continuous_runner(self, *args, **kwargs):
-        pass
-
-
+# TODO: we may still need rid to avoid double import problems
 class GeneratedModuleHandler:
-    def __init__(self, rid, name="ndscan__generated"):
-        self.name = name + f"_{rid}"
-        self.rid = rid
+    def __init__(self, name="ndscan__generated"):
+        self.name = name
         self.backing_string = _header_imports.format()
 
     def execute_module(self):
         loader = StringLoader(self.name, self.backing_string)
         module = load_with_loader(self.name, loader)
-        # executing module, remove from store
-        _GENERATED_STORE[self.rid] = None
         return module
 
     def add_fragment(self, *args, **kwargs):
