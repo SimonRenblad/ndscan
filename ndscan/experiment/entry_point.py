@@ -29,7 +29,7 @@ from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYO
 from artiq.coredevice.core import Core
 from artiq.coredevice.exceptions import RTIOUnderflow
 
-from .generated_modules import get_module_handler
+from .generated_modules import GeneratedModuleHandler
 from .default_analysis import AnnotationContext
 from .fragment import (ExpFragment, Fragment, RestartKernelTransitoryError,
                        TransitoryError)
@@ -629,17 +629,20 @@ class KernelOnceRunner(HasEnvironment):
         self.fragment = fragment
         self.setattr_device("core")
         self.setattr_device("scheduler")
-        self.gen_module_handler = get_module_handler(self.scheduler.rid)
-        fragment_class = self.fragment.__class__.__name__
-        self.gen_module_handler.add_once_runner(
-            fragment_class=fragment_class,
-        )
+        self.fragment_class = self.fragment.__class__.__name__
 
         self.max_rtio_underflow_retries = max_rtio_underflow_retries
         self.max_transitory_error_retries = max_transitory_error_retries
 
+    def build_generated(self):
+        self.handler = GeneratedModuleHandler()
+        self.fragment.build_generated(self.handler)
+        self.handler.add_once_runner(
+            fragment_class=self.fragment_class,
+        )
+
     def execute_generated_module(self):
-        module = self.gen_module_handler.execute_module()
+        module = self.handler.execute_module()
         self.fragment.use_generated_module(module)
         self.runner = module.InnerKernelOnceRunner(
             self.fragment,
@@ -658,7 +661,8 @@ class KernelContinuousRunner(HasEnvironment):
     max_rtio_underflow_retries: KernelInvariant[int32]
     max_transitory_error_retries: KernelInvariant[int32]
 
-    def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
+    def build(self, fragment: ExpFragment,
+              max_rtio_underflow_retries: int,
               max_transitory_error_retries: int,
               continue_running: bool = False,
               is_time_series: bool = False,
@@ -674,14 +678,18 @@ class KernelContinuousRunner(HasEnvironment):
 
         self.setattr_device("core")
         self.setattr_device("scheduler")
-        self.gen_module_handler = get_module_handler(self.scheduler.rid)
-        fragment_class = self.fragment.__class__.__name__
-        self.gen_module_handler.add_continuous_runner(
-            fragment_class=fragment_class,
+
+        self.fragment_class = self.fragment.__class__.__name__
+
+    def build_generated(self):
+        self.handler = GeneratedModuleHandler()
+        self.fragment.build_generated(self.handler)
+        self.handler.add_continuous_runner(
+            fragment_class=self.fragment_class,
         )
 
     def execute_generated_module(self):
-        module = self.gen_module_handler.execute_module()
+        module = self.handler.execute_module()
         self.fragment.use_generated_module(module)
         self.runner = module.InnerKernelContinuousRunner(
             self,

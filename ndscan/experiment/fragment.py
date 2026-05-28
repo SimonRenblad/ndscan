@@ -71,6 +71,7 @@ class Fragment(HasEnvironment):
         klass = self.__class__
         mod = klass.__module__
         self.fragment_name = klass.__name__
+        self.class_module = klass.__module__
         # KLUDGE: Strip prefix added by file_import() to make path matches compatible
         # across dashboard/artiq_run and the worker running the experiment. Should be
         # fixed at the source.
@@ -143,6 +144,9 @@ class Fragment(HasEnvironment):
         else:
             self.run_once_behavior="self.fragment.run_once()"
 
+        self.inner_fragment = None
+        self.inner_subscan = None
+
     def build_generated(self, handler):
         for s in self._subfragments:
             if s not in self._detached_subfragments:
@@ -151,7 +155,7 @@ class Fragment(HasEnvironment):
             device_cleanup=self._device_cleanup_string,
             device_setup=self._device_setup_string,
             fragment_name=self.fragment_name,
-            fragment_module=klass.__module__,
+            fragment_module=self.class_module,
             subfrags_types=self.subfrags_types,
             subscan_type=self.subscan_type,
             run_once_behavior=self.run_once_behavior,
