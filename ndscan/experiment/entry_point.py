@@ -359,7 +359,8 @@ class TopLevelRunner(HasEnvironment):
                 self.fragment,
                 self.max_rtio_underflow_retries,
                 self.max_transitory_error_retries,
-                self._continue_running
+                self._continue_running,
+                self.dataset_prefix
             )
             runner.run()
             return None, {c: s.get_last() for c, s in self._scan_result_sinks.items()}
@@ -375,7 +376,8 @@ class TopLevelRunner(HasEnvironment):
                 self.max_rtio_underflow_retries,
                 self.max_transitory_error_retries,
                 self._continue_running,
-                self._is_time_series
+                self._is_time_series,
+                self.dataset_prefix
             )
             runner.run()
         else:
@@ -659,9 +661,17 @@ class KernelContinuousRunner(HasEnvironment):
     def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
               max_transitory_error_retries: int,
               continue_running: bool = False,
-              is_time_series: bool = False
+              is_time_series: bool = False,
+              dataset_prefix = ""
              ):
         self.fragment = fragment
+        self.max_rtio_underflow_retries = max_rtio_underflow_retries
+        self.max_transitory_error_retries = max_transitory_error_retries
+        self.continue_running = continue_running
+        self._is_time_series = is_time_series
+        self.dataset_prefix = dataset_prefix
+
+
         self.setattr_device("core")
         self.setattr_device("scheduler")
         self.gen_module_handler = get_module_handler(self.scheduler.rid)
@@ -669,11 +679,6 @@ class KernelContinuousRunner(HasEnvironment):
         self.gen_module_handler.add_continuous_runner(
             fragment_class=fragment_class,
         )
-
-        self.max_rtio_underflow_retries = max_rtio_underflow_retries
-        self.max_transitory_error_retries = max_transitory_error_retries
-        self.continue_running = continue_running
-        self.is_time_series = is_time_series
 
     def execute_generated_module(self):
         module = self.gen_module_handler.execute_module()
