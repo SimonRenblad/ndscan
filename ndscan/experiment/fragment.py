@@ -1,14 +1,12 @@
-from artiq.language import HasEnvironment, kernel, portable, rpc, compile
+from artiq.language import HasEnvironment, rpc, compile
 from collections import OrderedDict
 from collections.abc import Iterable
 from copy import deepcopy
 import logging
-from typing import Any, Callable
+from typing import Any
 import textwrap
-from string import Template
-import os
 
-from .default_analysis import DefaultAnalysis, ResultPrefixAnalysisWrapper
+from .default_analysis import DefaultAnalysis
 from .parameters import ParamHandle, ParamStore, ParamBase
 from .result_channels import ResultChannel, FloatChannel
 from .utils import is_kernel, path_matches_spec
@@ -20,6 +18,7 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
 
 @rpc(flags={"async"})
 def log_failed_cleanup(path: str):
@@ -71,7 +70,8 @@ class Fragment(HasEnvironment):
         klass = self.__class__
         mod = klass.__module__
         self.fragment_name = klass.__name__
-        self.class_module = klass.__module__
+        self.fragment_module = klass.__module__
+
         # KLUDGE: Strip prefix added by file_import() to make path matches compatible
         # across dashboard/artiq_run and the worker running the experiment. Should be
         # fixed at the source.
@@ -155,7 +155,7 @@ class Fragment(HasEnvironment):
             device_cleanup=self._device_cleanup_string,
             device_setup=self._device_setup_string,
             fragment_name=self.fragment_name,
-            fragment_module=self.class_module,
+            fragment_module=self.fragment_module,
             subfrags_types=self.subfrags_types,
             subscan_type=self.subscan_type,
             run_once_behavior=self.run_once_behavior,

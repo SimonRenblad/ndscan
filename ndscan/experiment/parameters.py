@@ -12,7 +12,7 @@ with the appropriate type argument (:class:`FloatParam`, :class:`IntParam`,
 # machinery for all supported value types, in particular to handle cases where e.g.
 # both an int and a float parameter is scanned at the same time.
 from __future__ import annotations
-from artiq.language import portable, units, compile, kernel
+from artiq.language import portable, units, compile
 from artiq.language.core import Kernel
 from enum import Enum
 from numpy import int32
@@ -85,6 +85,7 @@ class FloatParamStore(ParamStore):
 
     def coerce(self, value):
         return float(value)
+
 
 @compile
 class IntParamStore(ParamStore):

@@ -6,16 +6,15 @@ another child fragment as part of its execution.
 from collections import OrderedDict
 from copy import copy
 from functools import reduce
-from artiq.language import kernel, portable, rpc
+from artiq.language import rpc
 from .default_analysis import AnnotationContext, DefaultAnalysis
-from .fragment import ExpFragment, Fragment, RestartKernelTransitoryError
+from .fragment import ExpFragment, Fragment
 from .parameters import ParamHandle
 from .result_channels import (ArraySink, LastValueSink, OpaqueChannel, ResultChannel,
                               SubscanChannel)
 from .scan_generator import ScanGenerator, ScanOptions, generate_points
 from .scan_runner import (ScanAxis, ScanRunner, ScanSpec, describe_analyses,
                           describe_scan, filter_default_analyses, select_runner_class)
-from .utils import is_kernel
 from ..utils import merge_no_duplicates, shorten_to_unambiguous_suffixes
 
 __all__ = ["setattr_subscan", "Subscan", "SubscanExpFragment"]
@@ -354,9 +353,9 @@ def setup_subscan(result_target: Fragment,
     runner = select_runner_class(scanned_fragment)(result_target)
 
     return Subscan(runner, result_target, scanned_fragment, axes, spec_channel,
-                           coordinate_channels, child_result_sinks,
-                           aggregate_result_channels, short_child_channel_names,
-                           analyses, parent_analysis_result_channels)
+                   coordinate_channels, child_result_sinks,
+                   aggregate_result_channels, short_child_channel_names,
+                   analyses, parent_analysis_result_channels)
 
 
 class SubscanExpFragment(ExpFragment):

@@ -228,7 +228,6 @@ class ResultChannel:
         """
         self.sink = sink
 
-
     def _get_type_string(self):
         raise NotImplementedError()
 
@@ -265,7 +264,7 @@ class NumericChannel(ResultChannel):
                 scale = 1.0
             else:
                 try:
-                    scale = getattr(artiq.language.units, unit)
+                    scale = getattr(units, unit)
                 except AttributeError:
                     raise KeyError("Unit {} is unknown, you must specify "
                                    "the scale manually".format(unit))

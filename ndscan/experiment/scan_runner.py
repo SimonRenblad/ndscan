@@ -16,12 +16,11 @@ from typing import Any
 import numpy as np
 from numpy import int32, int64
 from artiq.coredevice.core import Core
-from artiq.coredevice.exceptions import RTIOUnderflow
 from artiq.language import compile, HasEnvironment, kernel, Kernel, KernelInvariant, rpc
 
 from .generated_modules import GeneratedModuleHandler
 from .default_analysis import AnnotationContext, DefaultAnalysis
-from .fragment import ExpFragment, RestartKernelTransitoryError, TransitoryError
+from .fragment import ExpFragment
 from .parameters import ParamStore, FloatParamStore, IntParamStore, BoolParamStore
 from .result_channels import ResultChannel, ResultSink, SingleUseSink
 from .scan_generator import ScanGenerator, ScanOptions, generate_points

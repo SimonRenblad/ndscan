@@ -1,8 +1,6 @@
 from artiq.tools import load_with_loader
 from artiq.master.worker_impl import StringLoader
 
-# TODO(srenblad) can probably eliminate imports entirely since execute_generated_module
-# will need to be propagated pre-compilation separate from the other machinery
 
 _header_imports = """
 from __future__ import annotations
@@ -10,7 +8,7 @@ import logging
 from itertools import islice
 import numpy as np
 from numpy import int32, int64
-from artiq.language import kernel, compile
+from artiq.language import kernel, compile, print_rpc
 from artiq.coredevice.core import Core
 from ndscan.experiment.entry_point import KernelContinuousRunner, KernelOnceRunner
 from ndscan.experiment.fragment import Fragment, log_failed_cleanup
@@ -168,7 +166,6 @@ class InnerKernelContinuousRunner:
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
 
-    # TODO(srenblad): add back print statements
     @kernel
     def run(self) -> bool:
         self.runner.core.reset()
@@ -189,17 +186,38 @@ class InnerKernelContinuousRunner:
                     self.num_underflows_caught += 1
                     if self.num_underflows_caught > self.runner.max_rtio_underflow_retries:
                         raise
+                    print_rpc(
+                        "Ignoring RTIOUnderflow (" +
+                        str(self.num_current_underflows) +
+                        "/" +
+                        str(self.max_rtio_underflow_retries) +
+                        ")"
+                    )
                 except RestartKernelTransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.runner.max_transitory_error_retries):
                         raise
+                    print_rpc(
+                        "Caught transitory error (" +
+                        str(self.num_current_transitory_errors) +
+                        "/" +
+                        str(self.max_transitory_error_retries) +
+                        "), restarting kernel"
+                    )
                     return False
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.runner.max_transitory_error_retries):
                         raise
+                    print_rpc(
+                        "Caught transitory error (" +
+                        str(self.num_current_transitory_errors) +
+                        "/" +
+                        str(self.max_transitory_error_retries) +
+                        "), retrying"
+                    )
             return False
         finally:
             self.fragment.device_cleanup()
@@ -221,7 +239,6 @@ class InnerKernelOnceRunner:
         self.num_underflows_caught = 0
         self.num_transitory_errors_caught = 0
 
-    # TODO(srenblad): add back print statements
     @kernel
     def run(self) -> bool:
         try:
@@ -234,17 +251,32 @@ class InnerKernelOnceRunner:
                     self.num_underflows_caught += 1
                     if self.num_underflows_caught > self.runner.max_rtio_underflow_retries:
                         raise
+                    print_rpc(
+                        "Ignoring RTIOUnderflow (" +
+                        str(self.num_current_underflows) +
+                        "/" +
+                        str(self.max_rtio_underflow_retries) +
+                        ")"
+                    )
                 except RestartKernelTransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.runner.max_transitory_error_retries):
                         raise
+                    print_rpc("Caught transitory error, restarting kernel")
                     return False
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.runner.max_transitory_error_retries):
                         raise
+                    print_rpc(
+                        "Caught transitory error (" +
+                        str(self.num_current_transitory_errors) +
+                        "/" +
+                        str(self.max_transitory_error_retries) +
+                        "), retrying"
+                    )
         finally:
             self.fragment.device_cleanup()
         assert False, "Execution never reaches here, return is just to pacify compiler."

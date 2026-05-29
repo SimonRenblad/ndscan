@@ -18,13 +18,11 @@ from functools import reduce
 import logging
 import random
 import time
-import os
 from typing import Any
-from string import Template
 
 from numpy import int32
 
-from artiq.language import (EnvExperiment, HasEnvironment, kernel, portable, PYONValue,
+from artiq.language import (EnvExperiment, HasEnvironment, PYONValue,
                             rpc, TerminationRequested, compile, KernelInvariant)
 from artiq.coredevice.core import Core
 from artiq.coredevice.exceptions import RTIOUnderflow
@@ -510,9 +508,16 @@ def make_fragment_scan_exp(
 
 
 class HostOnceRunner(HasEnvironment):
-    def build(self, fragment, ):
-        pass
-    
+    def build(self, fragment,
+              max_rtio_underflow_retries: int = 3,
+              max_transitory_error_retries: int = 10,
+              ):
+        self.fragment = fragment
+        self.max_rtio_underflow_retries = max_rtio_underflow_retries
+        self.max_transitory_error_retries = max_transitory_error_retries
+        self.num_underflows_caught = 0
+        self.num_transitory_errors_caught = 0
+
     def run(self):
         try:
             while True:
@@ -552,8 +557,10 @@ class HostContinuousRunner(HasEnvironment):
               max_transitory_error_retries: int,
               continue_running: bool = False,
               is_time_series: bool = False
-             ):
-        pass
+              ):
+        self.fragment = fragment
+        self.max_rtio_underflow_retries = max_rtio_underflow_retries
+        self.max_transitory_error_retries = max_transitory_error_retries
 
     def run(self):
         self._point_phase = False
@@ -574,7 +581,7 @@ class HostContinuousRunner(HasEnvironment):
                 self.scheduler.pause()
         finally:
             self._set_completed()
-    # TODO(srenblad): add back print statements
+
     def _continuous_loop(self):
         try:
             while not self.scheduler.check_pause():
@@ -593,17 +600,38 @@ class HostContinuousRunner(HasEnvironment):
                     self.num_underflows_caught += 1
                     if self.num_underflows_caught > self.max_rtio_underflow_retries:
                         raise
+                    print(
+                        "Ignoring RTIOUnderflow (",
+                        self.num_current_underflows,
+                        "/",
+                        self.max_rtio_underflow_retries,
+                        ")",
+                    )
                 except RestartKernelTransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.max_transitory_error_retries):
                         raise
+                    print(
+                        "Caught transitory error (",
+                        self.num_current_transitory_errors,
+                        "/",
+                        self.max_transitory_error_retries,
+                        "), restarting kernel",
+                    )
                     return False
                 except TransitoryError:
                     self.num_transitory_errors_caught += 1
                     if (self.num_transitory_errors_caught >
                             self.max_transitory_error_retries):
                         raise
+                    print(
+                        "Caught transitory error (",
+                        self.num_current_transitory_errors,
+                        "/",
+                        self.max_transitory_error_retries,
+                        "), retrying",
+                    )
             return False
         finally:
             self.fragment.device_cleanup()
@@ -627,12 +655,13 @@ class KernelOnceRunner(HasEnvironment):
     def build(self, fragment: ExpFragment, max_rtio_underflow_retries: int,
               max_transitory_error_retries: int):
         self.fragment = fragment
-        self.setattr_device("core")
-        self.setattr_device("scheduler")
-        self.fragment_class = self.fragment.__class__.__name__
-
         self.max_rtio_underflow_retries = max_rtio_underflow_retries
         self.max_transitory_error_retries = max_transitory_error_retries
+
+        self.setattr_device("core")
+        self.setattr_device("scheduler")
+
+        self.fragment_class = self.fragment.__class__.__name__
 
     def build_generated(self):
         self.handler = GeneratedModuleHandler()
@@ -666,15 +695,14 @@ class KernelContinuousRunner(HasEnvironment):
               max_transitory_error_retries: int,
               continue_running: bool = False,
               is_time_series: bool = False,
-              dataset_prefix = ""
-             ):
+              dataset_prefix: str = ""
+              ):
         self.fragment = fragment
         self.max_rtio_underflow_retries = max_rtio_underflow_retries
         self.max_transitory_error_retries = max_transitory_error_retries
         self.continue_running = continue_running
         self._is_time_series = is_time_series
         self.dataset_prefix = dataset_prefix
-
 
         self.setattr_device("core")
         self.setattr_device("scheduler")
@@ -734,7 +762,7 @@ class KernelContinuousRunner(HasEnvironment):
             self.set_dataset(self.dataset_prefix + "point_phase",
                              self._point_phase,
                              broadcast=True)
-    
+
 
 def run_fragment_once(
     fragment: ExpFragment,
