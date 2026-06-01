@@ -5,8 +5,8 @@ Result handling building blocks.
 from numpy import int32
 from artiq.language import HasEnvironment, kernel, portable, rpc, compile
 from artiq.language import units
-from artiq.language.core import Kernel
-from typing import Any
+from artiq.language.core import Kernel, KernelInvariant
+from typing import Any, TypeVar, Generic
 from .utils import dump_json
 
 __all__ = [
@@ -384,6 +384,34 @@ class BoolChannel(ResultChannel):
         value = self._coerce_to_type(raw_value)
         if self.sink:
             self.sink.push(value)
+
+
+T = TypeVar("T")
+
+
+@compile
+class GenericResultChannel(Generic[T], ResultChannel):
+    # FIXME: Allow class-independent type variables in method arguments #757 NAC3
+    default: KernelInvariant[T]
+
+    def __init__(self, path: str,
+                 default: T,
+                 description: str = "",
+                 display_hints: dict[str, Any] | None = None):
+        ResultChannel.__init__(self, path, description, display_hints)
+        self.default = default
+
+    def _get_type_string(self):
+        return "generic"
+
+    def _coerce_to_type(self, value):
+        return value
+
+    @rpc(flags={"async"})
+    def push(self, raw_value: T):
+        self.default = raw_value
+        if self.sink:
+            self.sink.push(self.default)
 
 
 # TODO(srenblad): raw_value is Any by design
