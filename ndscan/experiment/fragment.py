@@ -142,7 +142,7 @@ class Fragment(HasEnvironment):
             self.run_once_behavior = "self.subscan.acquire()"
             self.subscan_type = f"subscan: KernelInvariant[{self.subscan_name}]"
         else:
-            self.run_once_behavior="self.fragment.run_once()"
+            self.run_once_behavior = "self.fragment.run_once()"
 
         self.inner_fragment = None
         self.inner_subscan = None

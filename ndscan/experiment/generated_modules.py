@@ -36,6 +36,8 @@ class Inner{fragment_name}:
         if fragment.inner_subscan is not None:
             self.subscan = fragment.inner_subscan
         for s in self.fragment._subfragments:
+            if s in self.fragment._detached_subfragments:
+                continue
             setattr(self, s._fragment_path[-1], s.inner_fragment)
 
     @portable
