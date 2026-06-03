@@ -390,31 +390,6 @@ T = TypeVar("T")
 
 
 @compile
-class GenericResultChannel(Generic[T], ResultChannel):
-    # FIXME: Allow class-independent type variables in method arguments #757 NAC3
-    default: KernelInvariant[T]
-
-    def __init__(self, path: str,
-                 default: T,
-                 description: str = "",
-                 display_hints: dict[str, Any] | None = None):
-        ResultChannel.__init__(self, path, description, display_hints)
-        self.default = default
-
-    def _get_type_string(self):
-        return "generic"
-
-    def _coerce_to_type(self, value):
-        return value
-
-    @rpc(flags={"async"})
-    def push(self, raw_value: T):
-        self.default = raw_value
-        if self.sink:
-            self.sink.push(self.default)
-
-
-# TODO(srenblad): raw_value is Any by design
 class OpaqueChannel(ResultChannel):
     """:class:`ResultChannel` that stores arbitrary data, with ndscan making no attempts
     to further interpret or display it.
@@ -434,7 +409,7 @@ class OpaqueChannel(ResultChannel):
         return value
 
     @rpc(flags={"async"})
-    def push(self, raw_value):
+    def push(self, raw_value: T):
         """
         """
         value = self._coerce_to_type(raw_value)
@@ -442,7 +417,7 @@ class OpaqueChannel(ResultChannel):
             self.sink.push(value)
 
 
-# TODO(srenblad): raw_value is arbitrary dict[str, Any], needs workaround
+@compile
 class SubscanChannel(ResultChannel):
     """Channel that stores the scan metadata for a subscan.
 
@@ -455,7 +430,7 @@ class SubscanChannel(ResultChannel):
         return dump_json(value)
 
     @rpc(flags={"async"})
-    def push(self, raw_value) -> None:
+    def push(self, raw_value: T) -> None:
         """
         """
         value = self._coerce_to_type(raw_value)
